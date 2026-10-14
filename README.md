@@ -16,8 +16,11 @@ in the PRESET browser, and it is saved with the sound.
   (2026-10-14): samples open from the PRESET browser and play, PITCH works, the project keeps them
   across saving and loading, two tracks play different samples, presets load on the other machines
   as before, and files at 44.1 and 46.875 kHz play at their pitch (heard as a steady tone against a
-  48 kHz copy). Stereo files were not tried (digiemu's tool writes mono). Not yet tried on a
-  Model:Cycles.
+  48 kHz copy). Stereo files were not tried (digiemu's tool writes mono). Tested on a Model:Cycles
+  (2026-10-14) with samples left on its +Drive by the Model:Samples OS: it boots, SAMPLE is on the
+  MACHINES page, samples open from the browser and play, PITCH, Start and Length work, several
+  tracks play different samples, and a saved project plays its samples again after switching the
+  device off and on.
 - Not SAMPLE's doing: when loading a project asks "Save … before loading?", Yes saves the project
   you leave but does not load the other one; loading it again works. The official OS 1.13 does
   the same, in digiemu and on a Model:Cycles.
