@@ -1,4 +1,4 @@
-# Cycles Sampler
+# Cycles One-Shot
 
 A sampler machine for the Elektron Model:Cycles, OS 1.13. Its sound core plays 16-bit mono samples
 once from a start to an end frame (one shot), at any pitch from −72 to +36 semitones. It sits on the

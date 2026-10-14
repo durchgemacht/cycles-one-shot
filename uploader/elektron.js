@@ -1,4 +1,4 @@
-/* Cycles Sampler uploader: the Elektron SysEx file protocol as the Model:Cycles OS 1.13 handles it
+/* Cycles One-Shot uploader: the Elektron SysEx file protocol as the Model:Cycles OS 1.13 handles it
    natively, and the sample file format. Plain functions without browser APIs, shared by the page
    (app.js) and the host tests (test.js, Node).
 

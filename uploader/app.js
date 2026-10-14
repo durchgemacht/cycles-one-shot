@@ -1,4 +1,4 @@
-/* Cycles Sampler uploader: the page. Web MIDI to the Model:Cycles, the folders on its +Drive, audio
+/* Cycles One-Shot uploader: the page. Web MIDI to the Model:Cycles, the folders on its +Drive, audio
    converted in the browser and written with the device's own file commands (elektron.js). */
 (function () {
     "use strict";

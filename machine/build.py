@@ -289,7 +289,7 @@ def build_tweak(gm, img):
         "name": "SAMPLE machine %s: one-shot sampler for samples on the +Drive" % VERSION,
         "description": [
             "7th machine after the 6 stock ones. Plays a sample from the +Drive once per trig through the",
-            "one-shot core of cycles-sampler (6-tap polyphase at 96 kHz, then the stock decimator). A sample",
+            "one-shot core of Cycles One-Shot (6-tap polyphase at 96 kHz, then the stock decimator). A sample",
             "is chosen for a SAMPLE track in the PRESET browser and saved with the sound; stereo files play",
             "as mono, other rates at their pitch. COLOR = start, SHAPE = length; DECAY, GATE and PUNCH: the",
             "stock amp chain set up like TONE. Samples live in 0x42800000..0x46700000, the payload above.",
