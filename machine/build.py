@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""SAMPLE 0.1: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
+"""SAMPLE 0.2: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
 
-The machine plays three built-in test samples (machine/test_samples.py) once per trig, through the
-one-shot core (src/smp_core.c) and the bridge (machine/sampler.c). It is added to the OS the way
-Modded-Cycles adds its MACRO machine (tools/gen_macro.py, MIT): the tables of machines,
-descriptors, names and update/render move into a payload at 0x43000000, which a boot hook in a
-freed sprite mask copies there at start-up; moveq bounds go up by one machine, and detours teach
-the MACHINES page, the encoder and the sound records the new machine. This script imports that
-machinery from your clone of Modded-Cycles (it changes nothing there), compiles the machine with
-the m68k-elf toolchain and writes
+The machine plays samples from the +Drive once per trig, through the one-shot core (src/smp_core.c)
+and the bridge (machine/sampler.c). A sample is chosen for a track in the PRESET browser and saved
+with the sound; machine/pool.c loads what the sounds name into free memory (0x42800000..0x46700000).
+The machine is added to the OS the way Modded-Cycles adds its MACRO machine (tools/gen_macro.py,
+MIT): the tables of machines, descriptors, names and update/render move into a payload at
+0x46700000, which a boot hook in a freed sprite mask copies there at start-up; moveq bounds go up
+by one machine, and detours teach the MACHINES page, the encoder and the sound records the new
+machine. Five more writes lead into SAMPLE's own hooks (machine/hooks.S, pool.c): the browser's
+file open, the sound record save (2 versions) and load, and the screen's redraw. This script
+imports the machinery from your clone of Modded-Cycles (it changes nothing there), compiles the
+machine with the m68k-elf toolchain and writes
 
     build/sampler-tweak.json                  the tweak, in Modded-Cycles' format
-    build/model-cycles_OS1.13-sampler-v0.1.syx
+    build/model-cycles_OS1.13-sampler-v0.2.syx
 
 It starts from your own copy of the official OS file (checked by its SHA-256). Modded-Cycles'
 build steps check every write against the stock bytes, refuse writes into free space the OS
@@ -31,7 +34,7 @@ import subprocess
 import sys
 import tempfile
 
-VERSION = "0.1"
+VERSION = "0.2"
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 BUILD = ROOT / "build"
@@ -42,13 +45,22 @@ BASE = 0x40000400
 # The machine: knobs COLOR, SHAPE, SWEEP, CONTOUR = (long name, short name, default[, min, max]);
 # decay = default of its Amp Decay; image = the picture it borrows (the OS has only 6; 4 = TONE).
 MACHINE = dict(name="SAMPLE", image=4, decay=127,
-               knobs=(("Start", "STRT", 0), ("Length", "LEN", 127), ("Sample", "SMPL", 0, 0, 2),
+               knobs=(("Start", "STRT", 0), ("Length", "LEN", 127), ("Unused", "----", 0),
                       ("Unused", "----", 0)))
-SOURCES = (ROOT / "src" / "smp_core.c", ROOT / "src" / "smp_coeffs.c", HERE / "sampler.c")
+SOURCES = (ROOT / "src" / "smp_core.c", ROOT / "src" / "smp_coeffs.c", HERE / "sampler.c", HERE / "pool.c",
+           HERE / "hooks.S")
 CFLAGS = ["-std=c99", "-mcpu=54418", "-O2", "-ffreestanding", "-fno-builtin", "-fno-tree-loop-distribute-patterns",
           "-nostdlib", "-fno-pic", "-fno-common", "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra",
-          "-Werror"]
+          "-Werror", "-DSAMPLE_MACHINE=6"]
 BSS_OFF = 0x36000           # variables after the moved tables, as MACRO
+PAY_SIZE = 0x100000         # the payload's place, 0x46700000..0x46800000; the samples' pool ends below it
+# SAMPLE's hooks: (address, stock bytes, "jsr" or "jmp", symbol). A jmp replaces the first 8 bytes of a
+# function (lea -12(sp),sp ; movem.l a2-a4,(sp)), which the hook runs itself (hooks.S).
+HOOKS = ((0x400a6602, "4eb9400a3052", "jsr", "smp_hook_open"),       # the browser opens a file
+         (0x4005afa0, "4feffff448d71c00", "jmp", "smp_hook_save2"),  # sound -> record, version 2
+         (0x4005b054, "4feffff448d71c00", "jmp", "smp_hook_save1"),  # sound -> record, version 1
+         (0x4005aecc, "4feffff448d71c00", "jmp", "smp_hook_load"),   # record -> sound
+         (0x400075f0, "4eb940076be4", "jsr", "smp_hook_tick"))       # the screen's redraw, about 30 Hz
 LINK = """SECTIONS
 {{
   .text {code:#x} : {{ *(.text.sampler_update) *(.text.sampler_render) *(.text*) }}
@@ -81,20 +93,19 @@ def load_mc(path):
 
 
 def compile_machine(gm, tmp, pay):
-    """Core, table, bridge and test samples, linked at pay (code and data) and pay + BSS_OFF
+    """Core, table, bridge, sample memory and hooks, linked at pay (code and data) and pay + BSS_OFF
     (variables). Returns (bytes from pay to the end of the data, symbols, end of the variables)."""
     gx, gs = gm.gx, gm.gs
-    test_c = tmp / "test_samples.c"
-    subprocess.run([sys.executable, "-I", str(HERE / "test_samples.py"), "--out", str(test_c)], check=True)
     objs = []
-    for src in SOURCES + (test_c,):
+    for src in SOURCES:
         o = tmp / (src.stem + ".o")
         gx.run([gx.CROSS + "gcc", *CFLAGS, "-I%s" % (ROOT / "src"), "-I%s" % HERE, "-c", str(src), "-o", str(o)])
         objs.append(o)
     ld, elf, out = tmp / "link.ld", tmp / "sampler.elf", tmp / "sampler.bin"
     ld.write_text(LINK.format(code=pay, bss=pay + BSS_OFF))
+    keep = [a for _, _, _, sym in HOOKS for a in ("-u", sym)]
     gx.run([gx.CROSS + "ld", "-T", str(ld), "--gc-sections", "--no-warn-rwx-segments", "-e", "sampler_update",
-            "-u", "sampler_render", "-o", str(elf), *map(str, objs)])
+            "-u", "sampler_render", *keep, "-o", str(elf), *map(str, objs)])
     secs = {}
     for line in gx.run([gx.CROSS + "objdump", "-h", str(elf)]).splitlines():
         f = line.split()
@@ -111,17 +122,22 @@ def compile_machine(gm, tmp, pay):
         if len(p_) == 3:
             syms[p_[2]] = int(p_[0], 16)
     if pay + len(blob) > gs.STUBS:
-        sys.exit("code, table and samples too big: %d bytes" % len(blob))
+        sys.exit("code and tables too big: %d bytes" % len(blob))
     bss = secs.get(".bss", (pay + BSS_OFF, 0))
     if bss[0] != pay + BSS_OFF:
         sys.exit("variables not at pay + 0x%x" % BSS_OFF)
+    if bss[0] + bss[1] > pay + PAY_SIZE:
+        sys.exit("variables end past 0x%x" % (pay + PAY_SIZE))
     return blob, syms, (bss[0] + bss[1] + 3) & ~3
 
 
 def build_tweak(gm, img):
-    """The tweak: gen_macro.build_tweak without Model-TG, with this machine in place of MACRO."""
+    """The tweak: gen_macro.build_tweak without Model-TG, with this machine in place of MACRO, at Model-TG's
+    payload address (the memory below it holds the samples), and with SAMPLE's hooks."""
     gx, gs, g7, g8, sprites = gm.gx, gm.gs, gm.g7, gm.g8, gm.sprites
-    pay = gs.PAY_ALONE
+    pay = gs.PAY_TG
+    if pay + PAY_SIZE != 0x46800000:
+        sys.exit("Modded-Cycles moved its payload for Model-TG: 0x%x" % pay)
     gs.set_base(pay)
     nm, top, n = 7, 6, 1                        # machines: the 6 stock ones, then SAMPLE
     cur = img
@@ -220,6 +236,12 @@ def build_tweak(gm, img):
             w(va, bytes.fromhex(old), jmp(ssyms[sym]))
         for va, old, sym in g7.CALLS:
             w(va, bytes.fromhex(old), bytes.fromhex("4eb9") + g7.be32(ssyms[sym]) + bytes.fromhex("4e71"))
+        for va, old, op, sym in HOOKS:
+            new_ = (bytes.fromhex("4eb9") + g7.be32(syms[sym]) if op == "jsr"
+                    else jmp(syms[sym]) + bytes.fromhex("4e71"))
+            if len(new_) != len(old) // 2:
+                sys.exit("hook at 0x%x: %d bytes for %d" % (va, len(new_), len(old) // 2))
+            w(va, bytes.fromhex(old), new_)
 
         # the payload: our code and data, the detours, the data block, the stock descriptors (copied from
         # your file at build time) and the new ones
@@ -257,16 +279,21 @@ def build_tweak(gm, img):
         if a_["off"] + len(a_["new"]) // 2 > b_["off"]:
             sys.exit("writes overlap at 0x%x" % (BASE + b_["off"]))
 
-    ids = gm.other_ids() | {"macro", "macro-tg", "model-tg", "model-tg-st"}
+    # Model-TG and Modded-Cycles' track filter hook the same sound record functions; sample preview needs
+    # Model-TG and plays sample files from the same browser
+    ids = gm.other_ids() | {"macro", "macro-tg", "model-tg", "model-tg-st", "track-filter", "sample-preview",
+                            "sample-preview-st"}
     tweak = {
         "id": "sampler",
         "order": 26,
-        "name": "SAMPLE machine %s: one-shot sampler with built-in test samples" % VERSION,
+        "name": "SAMPLE machine %s: one-shot sampler for samples on the +Drive" % VERSION,
         "description": [
-            "7th machine after the 6 stock ones. Plays one of three built-in test samples once per trig",
-            "through the one-shot core of cycles-sampler (6-tap polyphase at 96 kHz, then the stock",
-            "decimator). COLOR = start, SHAPE = length, SWEEP = sample; DECAY, GATE and PUNCH: the stock",
-            "amp chain set up like TONE. Machine mechanics from Modded-Cycles' MACRO (tools/gen_macro.py).",
+            "7th machine after the 6 stock ones. Plays a sample from the +Drive once per trig through the",
+            "one-shot core of cycles-sampler (6-tap polyphase at 96 kHz, then the stock decimator). A sample",
+            "is chosen for a SAMPLE track in the PRESET browser and saved with the sound; stereo files play",
+            "as mono, other rates at their pitch. COLOR = start, SHAPE = length; DECAY, GATE and PUNCH: the",
+            "stock amp chain set up like TONE. Samples live in 0x42800000..0x46700000, the payload above.",
+            "Machine mechanics from Modded-Cycles' MACRO (tools/gen_macro.py).",
         ],
         "device": "Model:Cycles",
         "os": "1.13",
@@ -275,7 +302,7 @@ def build_tweak(gm, img):
         "writes": writes,
         "append": {"at": "%#x" % at, "dest": "%#x" % pay, "size": size, "parts": parts, "reloc": reloc,
                    "pack": [["%#x" % a_, n_] for a_, n_ in segs]},
-        "symbols": {k: "%#x" % syms[k] for k in ("sampler_update", "sampler_render")},
+        "symbols": {k: "%#x" % syms[k] for k in ("sampler_update", "sampler_render") + tuple(h[3] for h in HOOKS)},
     }
     info = dict(code=len(blob), bss=bss_end - pay - BSS_OFF, image=sum(n_ for _, n_ in segs))
     return tweak, info
@@ -355,7 +382,7 @@ def main():
     tweak, info = build_tweak(gm, img)
     BUILD.mkdir(exist_ok=True)
     (BUILD / "sampler-tweak.json").write_text(json.dumps(tweak, indent=1) + "\n", encoding="utf-8")
-    print("tweak: %d writes; code, table and samples %d bytes, variables %d bytes, %d bytes added to the image"
+    print("tweak: %d writes; code and tables %d bytes, variables %d bytes, %d bytes added to the image"
           % (len(tweak["writes"]), info["code"], info["bss"], info["image"]))
     print("  sampler_update %s, sampler_render %s" % (tweak["symbols"]["sampler_update"],
                                                        tweak["symbols"]["sampler_render"]))

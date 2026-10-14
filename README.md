@@ -1,48 +1,87 @@
 # Cycles Sampler
 
 A sampler machine for the Elektron Model:Cycles, OS 1.13. Its sound core plays 16-bit mono samples
-once from a start to an end frame (one shot), at any pitch from −72 to +36 semitones. Version 0.1
-puts it on the Cycles as a 7th machine, SAMPLE, that plays three built-in test samples. Loading
-your own samples comes later.
+once from a start to an end frame (one shot), at any pitch from −72 to +36 semitones. It sits on the
+Cycles as a 7th machine, SAMPLE. Version 0.2 plays samples from the +Drive: you choose one per track
+in the PRESET browser, and it is saved with the sound.
 
 **Status (2026-10-14):**
 
 - Sound core and table: done and tested on the host. Every frame is checked bit for bit against an
   independent reference, DC passes exactly, and playback stops cleanly at the end.
-- Machine 0.1: builds into an OS image that passes every check of the build, and its bridge passes
-  its host tests. Tested in the digiemu emulator (2026-10-14): boots, SAMPLE plays, knobs, machine
-  changes and several tracks work. Not yet tried on a Model:Cycles.
+- Machine 0.1 (built-in test samples): tested in the digiemu emulator. It boots, SAMPLE plays, and
+  knobs, machine changes and several tracks work.
+- Machine 0.2 (samples from the +Drive): builds into an OS image that passes every check of the
+  build. Its bridge and sample memory pass their host tests. Tested in the digiemu emulator
+  (2026-10-14): samples open from the PRESET browser and play, PITCH works, the project keeps them
+  across saving and loading, two tracks play different samples, presets load on the other machines
+  as before, and files at 44.1 and 46.875 kHz play at their pitch (heard as a steady tone against a
+  48 kHz copy). Stereo files were not tried (digiemu's tool writes mono). Not yet tried on a
+  Model:Cycles.
+- Not SAMPLE's doing: when loading a project asks "Save … before loading?", Yes saves the project
+  you leave but does not load the other one; loading it again works. The official OS 1.13 does
+  the same, in digiemu and on a Model:Cycles.
 
-## The machine (0.1)
+## The machine (0.2)
 
-SAMPLE is the 7th machine on the MACHINES page, with TONE's picture. A trig plays the chosen test
-sample once:
+SAMPLE is the 7th machine on the MACHINES page, with TONE's picture. A trig plays the track's sample
+once:
 
 | Knob | SAMPLE |
 |---|---|
-| PITCH, FINE, the trig's note | pitch, as on every machine. Note 60 at PITCH 64 and FINE 64 plays the sample as recorded |
+| PITCH, FINE, the trig's note | pitch, as on every machine. Note 60 at PITCH 64 and FINE 64 plays the sample as recorded; a sample recorded at another rate keeps its pitch |
 | COLOR (Start) | where it starts, 0 = the beginning |
 | SHAPE (Length) | how much of the rest it plays, 127 = to the end |
-| SWEEP (Sample) | 0 pluck (C4), 1 hat, 2 chord (C major) |
-| CONTOUR | nothing yet |
+| SWEEP, CONTOUR | nothing yet |
 | DECAY, GATE, PUNCH | the stock amp chain, set up as on TONE; DECAY starts at 127 so a sample plays out |
 
-The test samples are synthetic (`machine/test_samples.py`), so they belong to nobody.
+**Choosing a sample.** Set a track to SAMPLE, open the PRESET browser and open a sample file on the
++Drive. The track's sound keeps everything else, its name included, and now names that file. Sample
+files are the ones the Model:Samples and Elektron Transfer write: a 64-byte header, then 16-bit
+big-endian PCM. A stereo file plays as mono (left and right mixed). On any other machine, and for
+presets, the browser works as before.
+
+**Where the choice is kept.** In the sound itself, in three parameter words the OS leaves unused (k
+25..27): the file's inode and its id. The id is the hash of the file's content that the file system
+keeps in the inode, so it names the file even if it moves. The sound records in projects, kits and
+presets keep the three words in record slots 24..26, which the OS writes as zero and never reads.
+So the choice survives saving, loading and copying a sound, also into the sound pool for sound
+locks.
+
+**Loading.** From the screen's redraw, about 30 times a second, the machine looks at every sound
+that could play: the kits of the 96 patterns, the kit the audio side is playing and the tracks' live
+sounds. It loads every sample a SAMPLE sound names into free memory, 63 MB from `0x42800000`, and
+frees what no sound names any more once no voice plays it. It reads 128 KB a tick through the file
+system's own read, so a fragmented file reads correctly. If a file is no longer at its inode, the
+file system's own index of ids says where it is now. A trig whose sample is not (yet) loaded stays
+silent. The tick leaves the drive alone while the file system is busy in the same task or not
+mounted.
 
 **How it is built in.** Modded-Cycles adds its MACRO machine with a generator (`tools/gen_macro.py`,
 MIT). `machine/build.py` uses the same machinery, imported from your clone of Modded-Cycles, which
 it leaves unchanged:
 
 - The tables of machines, parameter descriptors, names and `update`/`render` move into a payload at
-  `0x43000000`.
+  `0x46700000`, the place Modded-Cycles uses next to Model-TG. The samples get the 63 MB below it.
 - A boot hook in a freed sprite mask copies the payload there at start-up.
 - The `moveq` bounds go up by one machine.
 - Detours teach the MACHINES page, the encoder and the sound records the new machine.
 
-The machine's own code is `machine/sampler.c`. It renders 64 frames at 96 kHz through the core, then
-calls the stock decimator and the amp chain like TONE. Version 0.1 leaves out two optional writes
-that MACRO carries: `voice_loop` (a shorter halving loop with the same values) and `usb_steady` (an
-even USB audio clock).
+Five more writes lead into SAMPLE's own code:
+
+| Where | What it was | What SAMPLE adds |
+|---|---|---|
+| `0x400a6602` | the browser reads the opened file as a preset | on a SAMPLE track, a sample file instead names the sample in the track's sound (`machine/hooks.S`, `smp_browser_open`) |
+| `0x4005afa0`, `0x4005b054` | a sound becomes a record (versions 2 and 1) | the three words go into the record |
+| `0x4005aecc` | a record becomes a sound | the three words come back |
+| `0x400075f0` | the screen's redraw asks whether to draw | the loading tick runs first (`machine/pool.c`) |
+
+The audio side is `machine/sampler.c`. At a trig it reads the sample's id from the parameters the
+audio side has copied for the note, finds the loaded sample and starts it. It renders 64 frames at
+96 kHz through the core, then calls the stock decimator and the amp chain like TONE. Version 0.2
+leaves out two optional writes that MACRO carries: `voice_loop` (a shorter halving loop with the
+same values) and `usb_steady` (an even USB audio clock). It cannot be combined with Model-TG or with
+Modded-Cycles' track filter, which hook the same sound record functions.
 
 **Build:**
 
@@ -51,15 +90,27 @@ python3 machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to
     --tool path/to/elektron-firmware-tool
 ```
 
-This writes `build/model-cycles_OS1.13-sampler-v0.1.syx`, plus a `.json` report and the tweak in
+This writes `build/model-cycles_OS1.13-sampler-v0.2.syx`, plus a `.json` report and the tweak in
 Modded-Cycles' format (`build/sampler-tweak.json`). Every write is checked against the stock bytes,
 and writes into free space that the OS still points at are refused. The result is read back
 (checksums, HMAC, MAIN OS); with `--tool`, elektron-firmware-tool checks it again. Built against
-Modded-Cycles commit `6a9742a`. `make machine-test` runs the bridge's host tests.
+Modded-Cycles commit `6a9742a`. `make machine-test` runs the host tests of the bridge and the sample
+memory, with stand-ins for the OS.
 
-**What to try first, in an emulator:** that the OS boots; that SAMPLE shows up on the MACHINES
-page; trigs on a SAMPLE track; the knobs above; machine changes and machine locks; several SAMPLE
-tracks at once.
+**Trying it in digiemu.** digiemu's LOAD SAMPLES button is on the Model:Samples only. For the
+Cycles, put WAV files on the emulated +Drive with digiemu's own tool, while digiemu is closed, after
+the first start of this firmware has formatted its card:
+
+```sh
+python3 tools/ekfsadd.py path/to/firmware-folder/plusdrive.img kick.wav snare.wav
+```
+
+They land in `/incoming`, converted to mono; the rate is kept. The launcher then offers a rebuild.
+
+**What to try first:** a sample on a SAMPLE track from the browser; trigs, pitch, Start and Length;
+a 44.1 kHz file at note 60 (same pitch as recorded); saving and loading the project; another track
+or pattern with another sample; a pool sound with a sample as a sound lock; presets on other
+machines, as before.
 
 ## How it plays
 

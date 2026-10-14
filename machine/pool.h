@@ -1,0 +1,67 @@
+/* Sample memory of SAMPLE: the samples its sounds name, loaded from the +Drive.
+
+   The UI side (smp_ui_tick, about 30 times a second, never two at once) finds every SAMPLE sound in
+   the 96 kits and their pools, loads the samples they name and frees those nothing names any more.
+   It is the only writer of the slot table. The audio side only looks up READY slots (smp_find): a
+   slot becomes READY once its data is complete, and stops being READY before its memory is reused,
+   so neither side ever sees the other's half-done work.
+
+   A sound names a sample by the file's id (a hash of its content with bit 0 set, inode word 12) and
+   the inode it was found at, in its parameters k 25..27: +70 inode, +72 id high, +74 id low. When the
+   inode no longer holds that id, the file system's own index of ids says where the file is now. */
+#ifndef POOL_H
+#define POOL_H
+
+#include <stdint.h>
+
+#ifndef SAMPLE_MACHINE
+#define SAMPLE_MACHINE 6                /* SAMPLE's index among the machines; the build sets it */
+#endif
+#define SLOTS 128
+
+enum {
+    SLOT_FREE,                          /* unused */
+    SLOT_WANT,                          /* a sound names it; look for the file next */
+    SLOT_LOADING,                       /* memory taken, reading */
+    SLOT_READY,                         /* complete: the audio side may play it */
+    SLOT_FAILED,                        /* not found or not a sample: given up until chosen again */
+    SLOT_NOMEM,                         /* no room in the pool yet */
+    SLOT_RETIRING                       /* on its way out; the audio side starts nothing on it */
+};
+
+typedef struct {
+    volatile uint32_t state;
+    uint32_t id;                        /* the file's id */
+    uint32_t ino;                       /* the inode it was last found at */
+    uint32_t seen;                      /* the last scan that found a sound naming it */
+    char *mem;                          /* its memory in the pool, or 0 */
+    uint32_t size;                      /* bytes of memory it holds */
+    uint32_t bytes;                     /* audio bytes in the file (both channels if stereo) */
+    uint32_t done;                      /* audio bytes read so far */
+    uint32_t stereo;
+    uint32_t rate;                      /* the file's sample rate, Hz */
+    /* READY: what the audio side plays */
+    const int16_t *pcm;                 /* mono frames */
+    int32_t frames;
+    uint32_t rate_q16;                  /* rate / 48 kHz, Q16.16 */
+} smp_slot;
+
+extern smp_slot smp_slots[SLOTS];
+
+/* The id a sound names (0 if none) and the inode it was found at. */
+uint32_t smp_sound_id(const char *sound);
+uint32_t smp_sound_ino(const char *sound);
+
+/* Audio side: the READY slot that holds the sample with this id, or 0. */
+const smp_slot *smp_find(uint32_t id);
+
+/* UI side. */
+void smp_ui_tick(void);
+int smp_browser_open(void **result, const uint32_t *handle, int32_t track);
+void smp_after_save(char *record, const char *sound);
+void smp_after_load(char *sound, const char *record);
+
+/* From the bridge (sampler.c): does a voice play from memory in [lo, hi)? */
+int smp_voices_use(const void *lo, const void *hi);
+
+#endif

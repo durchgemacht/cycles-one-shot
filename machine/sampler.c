@@ -1,9 +1,10 @@
-/* SAMPLE: a sampler machine for the Elektron Model:Cycles, OS 1.13 - version 0.1, a test build.
+/* SAMPLE: a sampler machine for the Elektron Model:Cycles, OS 1.13 - the audio side.
 
-   It plays one of a few built-in test samples once per trig (one shot) through the core in
-   src/smp_core.c and hands the result to the Cycles' own chain: its 2:1 decimator (0x400a9f58),
-   then the amp envelope, VCA and PUNCH, set up the way TONE (0x400aa7b8) and Modded-Cycles'
-   MACRO set them. Samples from the +Drive come later.
+   A trig plays the sample its sound names once (one shot) through the core in src/smp_core.c and
+   hands the result to the Cycles' own chain: its 2:1 decimator (0x400a9f58), then the amp
+   envelope, VCA and PUNCH, set up the way TONE (0x400aa7b8) and Modded-Cycles' MACRO set them.
+   Which sample: the note's sound names it in its parameters k 26/27, read from the copy the audio
+   side keeps before any smoothing (TARGETS); pool.c has loaded it, or the note stays silent.
 
    Contract of the voice loop (Modded-Cycles notes/14 and notes/43): sampler_update(pmod, v, p),
    then sampler_render(out, v), once per block of 32 frames at 48 kHz. pmod is the trig's note in
@@ -14,24 +15,13 @@
    block silent.
 
    Knobs: PITCH, FINE and the trig's note set the pitch as on every machine; note 60 at PITCH 64
-   and FINE 64 plays the sample as recorded. COLOR = start, SHAPE = length (127: to the end),
-   SWEEP = which test sample. CONTOUR does nothing yet. DECAY, GATE and PUNCH are the stock amp
-   chain. */
+   and FINE 64 plays the sample as recorded (a sample at another rate keeps its pitch). COLOR =
+   start, SHAPE = length (127: to the end). SWEEP and CONTOUR do nothing yet. DECAY, GATE and PUNCH
+   are the stock amp chain. */
 #include <stdint.h>
 #include "smp_core.h"
-#include "test_samples.h"
-
-#ifdef SAMPLER_HOST
-#include "host_os.h"                            /* machine/test_sampler.c stands in for the OS */
-#else
-#define VOICE0      ((uintptr_t)0x42308828)     /* voice of track 0; one per track, VSTRIDE apart */
-#define AMP_ENV(v)          ((void (*)(char *))0x400a9252)(v)
-#define VCA(o, v)           ((void (*)(int32_t *, char *))0x400a9430)(o, v)
-#define PUNCH(o, v)         ((void (*)(int32_t *, char *))0x400a967a)(o, v)
-#define DECIMATE(v, in, o)  ((void (*)(char *, int32_t *, int32_t *))0x400a9f58)(v, in, o)
-#define LUT_DECAY           ((const int32_t *)0x4011d84c)       /* DECAY -> factor per block (TONE's) */
-#define DECIMATOR_STATE(v)  (*(int32_t **)((v) + 0x318))        /* its 8 + 4 frames for this voice */
-#endif
+#include "os.h"
+#include "pool.h"
 
 #define VSTRIDE     0x31c
 #define MARK_OFF    0x2c                        /* cleared by the voice reset when the machine changes */
@@ -43,6 +33,7 @@
 #define P16(o)      (*(const int16_t *)(p + (o)))
 
 static smp_voice voices[6];
+static uint32_t rates[6];                       /* each voice's sample rate / 48 kHz, Q16.16 */
 static int16_t scratch[SMP_SCRATCH];
 /* The decimator reads 8 frames of history and then the block at 96 kHz; it fills the history in
    itself from the voice's state (v+0x318) and stores it back. */
@@ -53,9 +44,9 @@ static const uint32_t SEMITONE[13] = {
     65536, 69433, 73562, 77936, 82570, 87480, 92682, 98193, 104032, 110218, 116772, 123715, 131072,
 };
 
-static smp_voice *voice_of(const char *v)
+static int track_of(const char *v)
 {
-    return &voices[((uintptr_t)v - VOICE0) / VSTRIDE];
+    return (int)(((uintptr_t)v - VOICE0) / VSTRIDE);
 }
 
 static uint32_t mag(int32_t x)
@@ -96,24 +87,47 @@ static uint32_t ratio_of(int32_t d)
     return oct >= 0 ? r << oct : r >> -oct;
 }
 
-/* A trig: play the chosen sample from COLOR's start for SHAPE's length. */
-static void start(smp_voice *sv, char *v, const char *p)
+/* a * b >> 16 from 16-bit parts (the ColdFire has no 64-bit product); a < 2^24, b < 2^20 */
+static uint32_t mul_q16(uint32_t a, uint32_t b)
 {
-    int32_t which = knob(p, 0x1a), len, from, i;
-    int32_t *state = DECIMATOR_STATE(v);
+    uint32_t ah = a >> 16, al = a & 0xffff, bh = b >> 16, bl = b & 0xffff;
 
-    if (which >= SMP_TEST_COUNT)
-        which = SMP_TEST_COUNT - 1;
-    len = smp_test[which].length;
-    from = part(len, knob(p, 0x16));
-    smp_trigger(sv, smp_test[which].pcm, len, from, from + part(len - from, knob(p, 0x18) + 1));
+    return ((ah * bh) << 16) + ah * bl + al * bh + ((al * bl) >> 16);
+}
+
+/* A trig: play the sample the note's sound names, from COLOR's start for SHAPE's length. */
+static void start(int t, char *v, const char *p)
+{
+    const uint16_t *k = (const uint16_t *)(TARGETS(t) + 52);   /* k 26/27: the sample's id */
+    const smp_slot *sl = smp_find((uint32_t)k[0] << 16 | k[1]);
+    int32_t *state = DECIMATOR_STATE(v);
+    int32_t from, i;
+
+    if (!sl) {                                  /* none, or not loaded yet: silence */
+        voices[t].active = 0;
+        return;
+    }
+    from = part(sl->frames, knob(p, 0x16));
+    smp_trigger(&voices[t], sl->pcm, sl->frames, from, from + part(sl->frames - from, knob(p, 0x18) + 1));
+    rates[t] = sl->rate_q16;
     for (i = 0; i < 12; i++)                   /* no tail of the previous sound */
         state[i] = 0;
 }
 
+int smp_voices_use(const void *lo, const void *hi)
+{
+    int t;
+
+    for (t = 0; t < 6; t++)
+        if (voices[t].active && (const void *)voices[t].pcm >= lo && (const void *)voices[t].pcm < hi)
+            return 1;
+    return 0;
+}
+
 void sampler_update(int32_t pmod, char *v, const char *p)
 {
-    smp_voice *sv = voice_of(v);
+    int t = track_of(v);
+    smp_voice *sv = &voices[t];
     int32_t dec, n;
 
     if (V32(MARK_OFF) != MARK) {                /* first block since the track changed machine */
@@ -141,17 +155,17 @@ void sampler_update(int32_t pmod, char *v, const char *p)
             V32(0x2a4) = 0x20000000;
             V32(0x48) = 0;
         }
-        start(sv, v, p);
+        start(t, v, p);
     }
     /* note = PITCH - 64 + the trig's note + FINE (+-2 semitones), as on every machine */
     n = ((int32_t)P16(0x14) << 8) + (((int32_t)P16(0x22) - 0x4000) << 3) - (64 << 16) + pmod;
     n = n < 0 ? 0 : n > 127 << 16 ? 127 << 16 : n;
-    smp_set_ratio(sv, ratio_of(n - ROOT));
+    smp_set_ratio(sv, mul_q16(ratio_of(n - ROOT), rates[t] ? rates[t] : 1u << 16));
 }
 
 void sampler_render(int32_t *out, char *v)
 {
-    smp_voice *sv = voice_of(v);
+    smp_voice *sv = &voices[track_of(v)];
     int i;
 
     /* nothing to play: no trig, and the sample has ended or the amp envelope is closed */

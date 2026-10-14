@@ -5,7 +5,7 @@
 #   make target     compile the core for the ColdFire and list its size and undefined symbols
 #   make coeffs     regenerate src/smp_coeffs.c from the design values below
 #   make render     build tools/render (listening tests, see its header)
-#   make machine-test   host tests of the machine's bridge (machine/sampler.c)
+#   make machine-test   host tests of the machine: bridge (machine/sampler.c) and sample memory (machine/pool.c)
 # The machine itself: python3 machine/build.py --stock ... --modded-cycles ... (see README)
 
 CC      ?= cc
@@ -40,13 +40,10 @@ $(B)/render: tools/render.c tools/design.c tools/design.h $(CORE) src/smp_core.h
 
 render: $(B)/render
 
-$(B)/test_samples.c: machine/test_samples.py | $(B)
-	python3 -I machine/test_samples.py --out $@
+MACHINE := machine/sampler.c machine/pool.c machine/pool.h machine/os.h machine/host_os.h
 
-$(B)/test_sampler: machine/test_sampler.c machine/sampler.c machine/host_os.h machine/test_samples.h \
-                   $(B)/test_samples.c $(CORE) src/smp_core.h | $(B)
-	$(CC) -std=c11 -O2 -Wall -Wextra -DSMP_DEBUG -Isrc -Imachine -o $@ machine/test_sampler.c $(CORE) \
-	    $(B)/test_samples.c
+$(B)/test_sampler: machine/test_sampler.c $(MACHINE) $(CORE) src/smp_core.h | $(B)
+	$(CC) -std=c11 -O2 -Wall -Wextra -DSMP_DEBUG -Isrc -Imachine -o $@ machine/test_sampler.c $(CORE) -lm
 
 machine-test: $(B)/test_sampler
 	$(B)/test_sampler
