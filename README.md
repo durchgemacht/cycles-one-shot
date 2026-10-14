@@ -19,8 +19,8 @@ in the PRESET browser, and it is saved with the sound.
   48 kHz copy). Stereo files were not tried (digiemu's tool writes mono). Tested on a Model:Cycles
   (2026-10-14) with samples left on its +Drive by the Model:Samples OS: it boots, SAMPLE is on the
   MACHINES page, samples open from the browser and play, PITCH, Start and Length work, several
-  tracks play different samples, and a saved project plays its samples again after switching the
-  device off and on.
+  tracks play different samples, a saved project plays its samples again after switching the
+  device off and on, sounds take the sample's name, and sample locks work.
 - Not SAMPLE's doing: when loading a project asks "Save … before loading?", Yes saves the project
   you leave but does not load the other one; loading it again works. The official OS 1.13 does
   the same, in digiemu and on a Model:Cycles.
@@ -32,17 +32,23 @@ once:
 
 | Knob | SAMPLE |
 |---|---|
-| PITCH, FINE, the trig's note | pitch, as on every machine. Note 60 at PITCH 64 and FINE 64 plays the sample as recorded; a sample recorded at another rate keeps its pitch |
+| PITCH (in tenths; FUNC + PITCH in semitones), the trig's note | pitch, as on every machine. PITCH 0 at note 60 plays the sample as recorded; a sample recorded at another rate keeps its pitch |
 | COLOR (Start) | where it starts, 0 = the beginning |
 | SHAPE (Length) | how much of the rest it plays, 127 = to the end |
 | SWEEP, CONTOUR | nothing yet |
-| DECAY, GATE, PUNCH | the stock amp chain, set up as on TONE; DECAY starts at 127 so a sample plays out |
+| DECAY, GATE, PUNCH | the stock amp chain, set up as on TONE. DECAY starts at 127 so a sample plays out. GATE holds the level while the note lasts, then DECAY lets it fall; at DECAY 127 that fall takes about 15 s, so GATE is only heard with a lower DECAY |
 
 **Choosing a sample.** Set a track to SAMPLE, open the PRESET browser and open a sample file on the
-+Drive. The track's sound keeps everything else, its name included, and now names that file. Sample
-files are the ones the Model:Samples and Elektron Transfer write: a 64-byte header, then 16-bit
-big-endian PCM. A stereo file plays as mono (left and right mixed). On any other machine, and for
-presets, the browser works as before.
++Drive. The track's sound keeps its settings and now names that file. As for presets, the browser
+gives the sound the file's name (up to 15 characters, without an extension) and shows
+"Loaded <name>". Sample files are the ones the Model:Samples and Elektron Transfer write: a 64-byte
+header, then 16-bit big-endian PCM. A stereo file plays as mono (left and right mixed). On any other
+machine, and for presets, the browser works as before.
+
+**Sample locks.** In the browser, select a sample, then hold a step of the SAMPLE track and open
+the sample. As for presets, the browser puts the sound into the sound pool (the LOCKS folder, where
+it shows the sample's name) and locks the step to it. That step then plays this sample, the other
+steps the track's own.
 
 **Where the choice is kept.** In the sound itself, in three parameter words the OS leaves unused (k
 25..27): the file's inode and its id. The id is the hash of the file's content that the file system
