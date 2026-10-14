@@ -21,6 +21,10 @@ in the PRESET browser, and it is saved with the sound.
   MACHINES page, samples open from the browser and play, PITCH, Start and Length work, several
   tracks play different samples, a saved project plays its samples again after switching the
   device off and on, sounds take the sample's name, and sample locks work.
+- Upload page 0.1 (`uploader/`): puts audio files on the +Drive over USB. Its protocol code and the
+  whole page pass their host tests against a stand-in Cycles. Tested with a Model:Cycles running
+  SAMPLE 0.2 (2026-10-14, Chrome on macOS): it connects, lists the +Drive, makes a folder and uploads
+  WAV files, which the Cycles' browser lists and SAMPLE plays.
 - Not SAMPLE's doing: when loading a project asks "Save … before loading?", Yes saves the project
   you leave but does not load the other one; loading it again works. The official OS 1.13 does
   the same, in digiemu and on a Model:Cycles.
@@ -120,6 +124,37 @@ They land in `/incoming`, converted to mono; the rate is kept. The launcher then
 a 44.1 kHz file at note 60 (same pitch as recorded); saving and loading the project; another track
 or pattern with another sample; a pool sound with a sample as a sound lock; presets on other
 machines, as before.
+
+## Getting samples onto the +Drive
+
+Elektron Transfer lists the samples on a Model:Cycles but will not add any: it treats the Cycles as
+a device without samples. The Cycles itself writes files fine, with the same file commands Transfer
+uses for presets. The upload page uses them:
+
+1. Connect the Cycles by USB and close Transfer, which would hold the MIDI port.
+2. Open `uploader/index.html` in Chrome or Edge, press **Connect** and allow MIDI with SysEx.
+3. Pick a folder on the +Drive, or make one with **New folder**.
+4. Add audio files (anything the browser can read: WAV, AIFF, MP3, FLAC…), rename them if you like,
+   and press **Upload to this folder**.
+
+Each file becomes a 48 kHz mono 16-bit sample in the format the Model:Samples and Transfer write (a
+64-byte header, big-endian frames, 16 zero bytes), so the Cycles' browser lists it and SAMPLE plays
+it. The page checks the size the Cycles reports afterwards. The Cycles stays silent while it writes,
+as with every file it writes. The page needs no firmware change, so it works with the official OS
+as well.
+
+If Chrome refuses MIDI to a page opened from disk, serve the folder locally and open
+http://localhost:8000:
+
+```sh
+python3 -m http.server --directory uploader 8000
+```
+
+The page is our own code (MIT). The protocol facts come from
+[ModdedTransfer](https://github.com/ktwzk/modded-transfer) (WTFPL), which uploads through Model-TG's
+SMP identity, and from Model-TG's table of the Cycles' own file commands (MIT): the Cycles answers
+0x14, 0x15 and 0x43–0x45 where a Model:Samples answers 0x10, 0x11 and 0x40–0x42.
+`make uploader-test` runs its tests (node).
 
 ## How it plays
 

@@ -6,6 +6,7 @@
 #   make coeffs     regenerate src/smp_coeffs.c from the design values below
 #   make render     build tools/render (listening tests, see its header)
 #   make machine-test   host tests of the machine: bridge (machine/sampler.c) and sample memory (machine/pool.c)
+#   make uploader-test  host tests of the upload page (uploader/, needs node)
 # The machine itself: python3 machine/build.py --stock ... --modded-cycles ... (see README)
 
 CC      ?= cc
@@ -21,7 +22,7 @@ DESIGN  := proto 0.34 0.55 100 0
 
 CORE    := src/smp_core.c src/smp_coeffs.c
 
-.PHONY: test measure sweep target coeffs check-coeffs render machine-test clean
+.PHONY: test measure sweep target coeffs check-coeffs render machine-test uploader-test clean
 
 $(B):
 	mkdir -p $(B)
@@ -47,6 +48,10 @@ $(B)/test_sampler: machine/test_sampler.c $(MACHINE) $(CORE) src/smp_core.h | $(
 
 machine-test: $(B)/test_sampler
 	$(B)/test_sampler
+
+uploader-test:
+	node uploader/test.js
+	node uploader/test-app.js
 
 test: $(B)/test_core
 	$(B)/test_core

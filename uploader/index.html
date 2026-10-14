@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cycles Sampler Upload</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #dedbd4;
+    --accent: #2f6f62; --accent-text: #ffffff; --bad: #a3312a; --ok: #2f6f62;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #201f1d; --text: #ecebe7; --muted: #9b978f; --line: #34322e;
+      --accent: #5fb3a1; --accent-text: #0f1513; --bad: #e0786f; --ok: #6cc3b0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 20px; }
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 14px;
+  }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  label { color: var(--muted); font-size: 13px; }
+  select, input, button { font: inherit; color: inherit; }
+  select, input {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0;
+  }
+  button {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled, select:disabled, input:disabled { opacity: 0.5; cursor: default; }
+  #path { font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+  ul { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px solid var(--line); }
+  li {
+    display: flex; gap: 10px; align-items: center; justify-content: space-between;
+    padding: 7px 4px; border-bottom: 1px solid var(--line);
+  }
+  li.folder { cursor: pointer; }
+  li.folder > span:first-child::before { content: "▸ "; color: var(--muted); }
+  li.folder:hover { background: var(--bg); }
+  li.empty { color: var(--muted); justify-content: flex-start; }
+  li input { flex: 1; }
+  .info { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .bad { color: var(--bad); }
+  .ok { color: var(--ok); }
+  #status { min-height: 1.4em; margin: 4px 2px 0; }
+  .note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+  @media (max-width: 520px) { .row > * { flex: 1 1 auto; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cycles Sampler Upload</h1>
+  <p class="lead">Puts audio files on the +Drive of a Model:Cycles over USB, as samples SAMPLE can play.
+    Use Chrome or Edge; the page asks for MIDI access with SysEx.</p>
+
+  <section>
+    <h2>1. Connect</h2>
+    <div class="row">
+      <button id="connect" class="primary">Connect</button>
+      <label for="in">In</label><select id="in"></select>
+      <label for="out">Out</label><select id="out"></select>
+    </div>
+    <p class="note">Connect the Cycles by USB and close Elektron Transfer, which would share the port.</p>
+  </section>
+
+  <section>
+    <h2>2. Folder on the Cycles</h2>
+    <div class="row">
+      <span id="path">/</span>
+      <span style="flex: 1"></span>
+      <button id="refresh">Refresh</button>
+      <button id="mkdir">New folder</button>
+    </div>
+    <ul id="folder"></ul>
+  </section>
+
+  <section>
+    <h2>3. Files</h2>
+    <div class="row">
+      <button id="pick">Add files…</button>
+      <input id="chooser" type="file" accept="audio/*,.wav,.aif,.aiff,.mp3,.flac,.ogg,.m4a" multiple hidden>
+      <span style="flex: 1"></span>
+      <button id="upload" class="primary">Upload to this folder</button>
+    </div>
+    <ul id="files"></ul>
+    <p class="note">Each file becomes a 48 kHz mono sample named as listed. The Cycles stays silent
+      while it writes.</p>
+  </section>
+
+  <p id="status" aria-live="polite"></p>
+</main>
+<script src="elektron.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
