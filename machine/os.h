@@ -75,5 +75,37 @@ static inline char *os_sound(int t)
 #define FS_FIND_ID(id)      ((int32_t (*)(uint32_t))0x4007dc30)(id)
 #define FS_ID_INO(i)        (((const volatile uint32_t *)0x401fb8a8)[2 * (i)])
 
+/* --- the screen -------------------------------------------------------------------------------- */
+/* Two views take turns on the main screen; each is drawn through entry +16 of its vtable, the only
+   reference to its draw method. MainScreenView (vtable 0x400ffe20, draw 0x4001b22a) shows the track
+   with its level and pan while no value is shown. The knob view (vtable 0x4010052c, draw
+   0x4001e40a) shows a turned parameter's name and value while one is shown (UIStates+88,
+   0x4006b704); its knob handler 0x4001f4f0 keeps that parameter's index at +0x230 (0x4001f73a). */
+#define MAIN_DRAW(v, b)     ((void (*)(void *, void *))0x4001b22a)(v, b)
+#define KNOB_DRAW(v, b)     ((void (*)(void *, void *))0x4001e40a)(v, b)
+#define KNOB_PARAM(v)       (*(const int32_t *)((const char *)(v) + 0x230))
+#define VALUE_SHOWN()       (((char (*)(void *))0x4006b704)(((void *(*)(void))0x400cf9a8)()) != 0)
+/* A trig is held, so a turned knob edits its locks (UIStates+356, 0x4006b736); the knob view then
+   shows the held trigs' locked values (0x4001e5dc). */
+#define TRIG_HELD()         (((char (*)(void *))0x4006b736)(((void *(*)(void))0x400cf9a8)()) != 0)
+/* The selected track: 0x40012412(0x4000eb90(project)), as in Modded-Cycles' notes 32 and 44. */
+static inline int32_t selected_track(void)
+{
+    char *project = ((char *(*)(void))0x400cf866)();
+
+    if (!project)
+        return -1;
+    return ((int32_t (*)(void *))0x40012412)(((void *(*)(void *))0x4000eb90)(project));
+}
+/* A Bitmap (constructor 0x40070172): +4 width, +8 height, +12 32-bit words per column, +16 the
+   words; pixel (x, y) is bit 31 - (y & 31) of word x * pitch + y / 32, y = 0 at the bottom. Text:
+   0x40071a04(bitmap, font, x, y, flags, format, ...), flags 0 = from x on, 2 = centred on x. A font
+   object is {0x401117e0, glyphs} (0x40072260, undone by 0x40072080). */
+#define FONT_MAKE(f, glyphs) ((void (*)(void *, const void *))0x40072260)(f, glyphs)
+#define FONT_DROP(f)        ((void (*)(void *))0x40072080)(f)
+#define FONT_SMALL          ((const void *)0x40140ab0)      /* 5 x 9 pixels */
+#define FONT_MEDIUM         ((const void *)0x4014120c)      /* 7 x 9 pixels */
+#define DRAW_TEXT           ((void (*)(void *, void *, int32_t, int32_t, int32_t, const char *, ...))0x40071a04)
+
 #endif
 #endif

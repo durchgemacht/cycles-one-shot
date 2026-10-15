@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SAMPLE 0.2: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
+"""SAMPLE 0.4: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
 
 The machine plays samples from the +Drive once per trig, through the one-shot core (src/smp_core.c)
 and the bridge (machine/sampler.c). A sample is chosen for a track in the PRESET browser and saved
@@ -9,12 +9,14 @@ MIT): the tables of machines, descriptors, names and update/render move into a p
 0x46700000, which a boot hook in a freed sprite mask copies there at start-up; moveq bounds go up
 by one machine, and detours teach the MACHINES page, the encoder and the sound records the new
 machine. Five more writes lead into SAMPLE's own hooks (machine/hooks.S, pool.c): the browser's
-file open, the sound record save (2 versions) and load, and the screen's redraw. This script
+file open, the sound record save (2 versions) and load, and the screen's redraw. Two vtable entries
+lead the draw methods of the main screen and of the knob view through SAMPLE's view (machine/view.c),
+which shows a SAMPLE track's waveform with its start and end. This script
 imports the machinery from your clone of Modded-Cycles (it changes nothing there), compiles the
 machine with the m68k-elf toolchain and writes
 
     build/sampler-tweak.json                  the tweak, in Modded-Cycles' format
-    build/model-cycles_OS1.13-sampler-v0.2.syx
+    build/model-cycles_OS1.13-sampler-v0.4.syx
 
 It starts from your own copy of the official OS file (checked by its SHA-256). Modded-Cycles'
 build steps check every write against the stock bytes, refuse writes into free space the OS
@@ -34,7 +36,7 @@ import subprocess
 import sys
 import tempfile
 
-VERSION = "0.2"
+VERSION = "0.4"
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 BUILD = ROOT / "build"
@@ -43,15 +45,17 @@ MC_TESTED = "6a9742a"       # the Modded-Cycles commit this was built against (t
 BASE = 0x40000400
 
 # The machine: knobs COLOR, SHAPE, SWEEP, CONTOUR = (long name, short name, default[, min, max]);
+# Start and Length run to 120 as on the Model:Samples (SMP_SPAN in machine/pool.h);
 # decay = default of its Amp Decay; image = the picture it borrows (the OS has only 6; 4 = TONE).
 MACHINE = dict(name="SAMPLE", image=4, decay=127,
-               knobs=(("Start", "STRT", 0), ("Length", "LEN", 127), ("Unused", "----", 0),
+               knobs=(("Start", "STRT", 0, 0, 120), ("Length", "LEN", 120, 0, 120), ("Unused", "----", 0),
                       ("Unused", "----", 0)))
+FIRST_DESC = 76            # the descriptor of SAMPLE's first knob (COLOR = Start), after the OS's 76
 SOURCES = (ROOT / "src" / "smp_core.c", ROOT / "src" / "smp_coeffs.c", HERE / "sampler.c", HERE / "pool.c",
-           HERE / "hooks.S")
+           HERE / "view.c", HERE / "hooks.S")
 CFLAGS = ["-std=c99", "-mcpu=54418", "-O2", "-ffreestanding", "-fno-builtin", "-fno-tree-loop-distribute-patterns",
           "-nostdlib", "-fno-pic", "-fno-common", "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra",
-          "-Werror", "-DSAMPLE_MACHINE=6"]
+          "-Werror", "-DSAMPLE_MACHINE=6", "-DDESC_START=%d" % FIRST_DESC]
 BSS_OFF = 0x36000           # variables after the moved tables, as MACRO
 PAY_SIZE = 0x100000         # the payload's place, 0x46700000..0x46800000; the samples' pool ends below it
 # SAMPLE's hooks: (address, stock bytes, "jsr" or "jmp", symbol). A jmp replaces the first 8 bytes of a
@@ -61,6 +65,11 @@ HOOKS = ((0x400a6602, "4eb9400a3052", "jsr", "smp_hook_open"),       # the brows
          (0x4005b054, "4feffff448d71c00", "jmp", "smp_hook_save1"),  # sound -> record, version 1
          (0x4005aecc, "4feffff448d71c00", "jmp", "smp_hook_load"),   # record -> sound
          (0x400075f0, "4eb940076be4", "jsr", "smp_hook_tick"))       # the screen's redraw, about 30 Hz
+# SAMPLE's view: (vtable entry, stock method, symbol). Entry +16 is a view's draw method, called by the
+# screen's redraw (0x40076c76) with the view and the screen's Bitmap; each entry is the only reference
+# to its method, and SAMPLE's calls the stock one for anything else.
+VIEWS = ((0x400ffe30, 0x4001b22a, "smp_main_draw"),       # MainScreenView (vtable 0x400ffe20)
+         (0x4010053c, 0x4001e40a, "smp_knob_draw"))       # the knob view (vtable 0x4010052c)
 LINK = """SECTIONS
 {{
   .text {code:#x} : {{ *(.text.sampler_update) *(.text.sampler_render) *(.text*) }}
@@ -103,7 +112,7 @@ def compile_machine(gm, tmp, pay):
         objs.append(o)
     ld, elf, out = tmp / "link.ld", tmp / "sampler.elf", tmp / "sampler.bin"
     ld.write_text(LINK.format(code=pay, bss=pay + BSS_OFF))
-    keep = [a for _, _, _, sym in HOOKS for a in ("-u", sym)]
+    keep = [a for sym in [h[3] for h in HOOKS] + [v[2] for v in VIEWS] for a in ("-u", sym)]
     gx.run([gx.CROSS + "ld", "-T", str(ld), "--gc-sections", "--no-warn-rwx-segments", "-e", "sampler_update",
             "-u", "sampler_render", *keep, "-o", str(elf), *map(str, objs)])
     secs = {}
@@ -147,7 +156,7 @@ def build_tweak(gm, img):
         tmp = pathlib.Path(d)
         blob, syms, bss_end = compile_machine(gm, tmp, pay)
         names_at, upd_at, rnd_at, map_at = gs.DATA, gs.DATA + 4 * nm, gs.DATA + 8 * nm, gs.DATA + 16 * nm
-        stubs, ssyms = gm.assemble(tmp, "det", gs.detours_asm(n, [m["image"]], [76], None), gs.STUBS)
+        stubs, ssyms = gm.assemble(tmp, "det", gs.detours_asm(n, [m["image"]], [FIRST_DESC], None), gs.STUBS)
         if gs.STUBS + len(stubs) > gs.DATA:
             sys.exit("detours too big")
 
@@ -242,6 +251,10 @@ def build_tweak(gm, img):
             if len(new_) != len(old) // 2:
                 sys.exit("hook at 0x%x: %d bytes for %d" % (va, len(new_), len(old) // 2))
             w(va, bytes.fromhex(old), new_)
+        for va, method, sym in VIEWS:
+            if g7.refs32(cur, method) != [va]:
+                sys.exit("references to 0x%x: %s" % (method, [hex(r) for r in g7.refs32(cur, method)]))
+            w(va, g7.be32(method), g7.be32(syms[sym]))
 
         # the payload: our code and data, the detours, the data block, the stock descriptors (copied from
         # your file at build time) and the new ones
@@ -291,8 +304,11 @@ def build_tweak(gm, img):
             "7th machine after the 6 stock ones. Plays a sample from the +Drive once per trig through the",
             "one-shot core of Cycles One-Shot (6-tap polyphase at 96 kHz, then the stock decimator). A sample",
             "is chosen for a SAMPLE track in the PRESET browser and saved with the sound; stereo files play",
-            "as mono, other rates at their pitch. COLOR = start, SHAPE = length; DECAY, GATE and PUNCH: the",
-            "stock amp chain set up like TONE. Samples live in 0x42800000..0x46700000, the payload above.",
+            "as mono, other rates at their pitch. COLOR = start, SHAPE = length, 0..120 each as on the",
+            "Model:Samples (it ends at start + length); DECAY, GATE and PUNCH: the stock amp chain set up",
+            "like TONE. On a SAMPLE track the main screen shows the sample's name and waveform, start and",
+            "end marked; turning COLOR or SHAPE moves the marks. Samples live in 0x42800000..0x46700000,",
+            "the payload above.",
             "Machine mechanics from Modded-Cycles' MACRO (tools/gen_macro.py).",
         ],
         "device": "Model:Cycles",
@@ -302,7 +318,8 @@ def build_tweak(gm, img):
         "writes": writes,
         "append": {"at": "%#x" % at, "dest": "%#x" % pay, "size": size, "parts": parts, "reloc": reloc,
                    "pack": [["%#x" % a_, n_] for a_, n_ in segs]},
-        "symbols": {k: "%#x" % syms[k] for k in ("sampler_update", "sampler_render") + tuple(h[3] for h in HOOKS)},
+        "symbols": {k: "%#x" % syms[k] for k in ("sampler_update", "sampler_render") + tuple(h[3] for h in HOOKS)
+                    + tuple(v[2] for v in VIEWS)},
     }
     info = dict(code=len(blob), bss=bss_end - pay - BSS_OFF, image=sum(n_ for _, n_ in segs))
     return tweak, info

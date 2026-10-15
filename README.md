@@ -2,10 +2,11 @@
 
 A sampler machine for the Elektron Model:Cycles, OS 1.13. Its sound core plays 16-bit mono samples
 once from a start to an end frame (one shot), at any pitch from −72 to +36 semitones. It sits on the
-Cycles as a 7th machine, SAMPLE. Version 0.2 plays samples from the +Drive: you choose one per track
-in the PRESET browser, and it is saved with the sound.
+Cycles as a 7th machine, SAMPLE. It plays samples from the +Drive: you choose one per track in the
+PRESET browser, and it is saved with the sound. Version 0.4 shows a SAMPLE track's sample on the
+screen as a waveform, with its start and end marked.
 
-**Status (2026-10-14):**
+**Status (2026-10-15):**
 
 - Sound core and table: done and tested on the host. Every frame is checked bit for bit against an
   independent reference, DC passes exactly, and playback stops cleanly at the end.
@@ -21,6 +22,13 @@ in the PRESET browser, and it is saved with the sound.
   MACHINES page, samples open from the browser and play, PITCH, Start and Length work, several
   tracks play different samples, a saved project plays its samples again after switching the
   device off and on, sounds take the sample's name, and sample locks work.
+- Machine 0.4 (the waveform view; Start and Length as on the Model:Samples): builds into an OS
+  image that passes every check of the build. The view passes its host tests: the waveform columns
+  against the sample, the markers, the name and the messages, and which screens it takes over.
+  Tested in the digiemu emulator (2026-10-15): the waveform view with its name and messages, the
+  lines following COLOR and SHAPE, the value window for other knobs and for locks, the stock
+  screens on other machines, and Start and Length as on the Model:Samples. Not yet tried on a
+  Model:Cycles.
 - Upload page 0.1 (`uploader/`): puts audio files on the +Drive over USB. Its protocol code and the
   whole page pass their host tests against a stand-in Cycles. Tested with a Model:Cycles running
   SAMPLE 0.2 (2026-10-14, Chrome on macOS): it connects, lists the +Drive, makes a folder and uploads
@@ -29,7 +37,7 @@ in the PRESET browser, and it is saved with the sound.
   you leave but does not load the other one; loading it again works. The official OS 1.13 does
   the same, in digiemu and on a Model:Cycles.
 
-## The machine (0.2)
+## The machine (0.4)
 
 SAMPLE is the 7th machine on the MACHINES page, with TONE's picture. A trig plays the track's sample
 once:
@@ -37,10 +45,16 @@ once:
 | Knob | SAMPLE |
 |---|---|
 | PITCH (in tenths; FUNC + PITCH in semitones), the trig's note | pitch, as on every machine. PITCH 0 at note 60 plays the sample as recorded; a sample recorded at another rate keeps its pitch |
-| COLOR (Start) | where it starts, 0 = the beginning |
-| SHAPE (Length) | how much of the rest it plays, 127 = to the end |
+| COLOR (Start) | where it starts: 0 = the beginning, 120 = the end |
+| SHAPE (Length) | how much it plays, in the same 120ths of the sample: it ends at Start + Length, at most at the sample's end. 120 (the default) plays to the end. Moving Start keeps the length |
 | SWEEP, CONTOUR | nothing yet |
 | DECAY, GATE, PUNCH | the stock amp chain, set up as on TONE. DECAY starts at 127 so a sample plays out. GATE holds the level while the note lasts, then DECAY lets it fall; at DECAY 127 that fall takes about 15 s, so GATE is only heard with a lower DECAY |
+
+Start and Length work as on the Model:Samples (its OS computes the same at `0x400a62dc`), 0 to 120
+each, so 120 splits evenly into slices: Length 15 and Start 0, 15, 30 … play 8 equal parts, Length
+10 and Start 0, 10, 20 … play 12. Sounds saved with version 0.2 counted both in 128ths of the
+sample, Length of the rest after Start; they keep their values, which now count as above, and
+values past 120 count as 120. Length 127, 0.2's default, still plays to the end.
 
 **Choosing a sample.** Set a track to SAMPLE, open the PRESET browser and open a sample file on the
 +Drive. The track's sound keeps its settings and now names that file. As for presets, the browser
@@ -48,6 +62,16 @@ gives the sound the file's name (up to 15 characters, without an extension) and 
 "Loaded <name>". Sample files are the ones the Model:Samples and Elektron Transfer write: a 64-byte
 header, then 16-bit big-endian PCM. A stereo file plays as mono (left and right mixed). On any other
 machine, and for presets, the browser works as before.
+
+**The screen.** While a SAMPLE track is selected, the main screen shows the sample as a waveform
+across the whole width, scaled to the sample's own peak, and the sound's name above it, which the
+browser set to the sample's name. A solid line marks where a trig starts (COLOR), a dotted line
+where it stops (SHAPE); the part in between is drawn in full, the rest in every other pixel.
+Turning COLOR or SHAPE moves the lines while you turn, in place of the usual value window. Any
+other knob shows its value as before, and so do Start and Length while you hold a trig to lock
+them: the value window then shows the locked value. Tracks on other machines keep the stock
+screens. Until a sample is chosen the screen says only NO SAMPLE, without a name; while it loads it
+says LOADING, and NOT FOUND if the file is not on the +Drive.
 
 **Sample locks.** In the browser, select a sample, then hold a step of the SAMPLE track and open
 the sample. As for presets, the browser puts the sound into the sound pool (the LOCKS folder, where
@@ -80,7 +104,7 @@ it leaves unchanged:
 - The `moveq` bounds go up by one machine.
 - Detours teach the MACHINES page, the encoder and the sound records the new machine.
 
-Five more writes lead into SAMPLE's own code:
+Seven more writes lead into SAMPLE's own code:
 
 | Where | What it was | What SAMPLE adds |
 |---|---|---|
@@ -88,11 +112,12 @@ Five more writes lead into SAMPLE's own code:
 | `0x4005afa0`, `0x4005b054` | a sound becomes a record (versions 2 and 1) | the three words go into the record |
 | `0x4005aecc` | a record becomes a sound | the three words come back |
 | `0x400075f0` | the screen's redraw asks whether to draw | the loading tick runs first (`machine/pool.c`) |
+| `0x400ffe30`, `0x4010053c` | the draw methods of the main screen and of the knob view, in their vtables | SAMPLE's view (`machine/view.c`), which calls the stock method for anything it does not draw itself |
 
 The audio side is `machine/sampler.c`. At a trig it reads the sample's id from the parameters the
 audio side has copied for the note, finds the loaded sample and starts it. It renders 64 frames at
-96 kHz through the core, then calls the stock decimator and the amp chain like TONE. Version 0.2
-leaves out two optional writes that MACRO carries: `voice_loop` (a shorter halving loop with the
+96 kHz through the core, then calls the stock decimator and the amp chain like TONE. It leaves out
+two optional writes that MACRO carries: `voice_loop` (a shorter halving loop with the
 same values) and `usb_steady` (an even USB audio clock). It cannot be combined with Model-TG or with
 Modded-Cycles' track filter, which hook the same sound record functions.
 
@@ -103,12 +128,13 @@ python3 machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to
     --tool path/to/elektron-firmware-tool
 ```
 
-This writes `build/model-cycles_OS1.13-sampler-v0.2.syx`, plus a `.json` report and the tweak in
+This writes `build/model-cycles_OS1.13-sampler-v0.4.syx`, plus a `.json` report and the tweak in
 Modded-Cycles' format (`build/sampler-tweak.json`). Every write is checked against the stock bytes,
 and writes into free space that the OS still points at are refused. The result is read back
 (checksums, HMAC, MAIN OS); with `--tool`, elektron-firmware-tool checks it again. Built against
-Modded-Cycles commit `6a9742a`. `make machine-test` runs the host tests of the bridge and the sample
-memory, with stand-ins for the OS.
+Modded-Cycles commit `6a9742a`. `make machine-test` runs the host tests of the bridge, the sample
+memory and the view, with stand-ins for the OS; with `VIEW_PREVIEW` set to a folder, it also writes
+the views it draws there as PBM pictures.
 
 **Trying it in digiemu.** digiemu's LOAD SAMPLES button is on the Model:Samples only. For the
 Cycles, put WAV files on the emulated +Drive with digiemu's own tool, while digiemu is closed, after
@@ -120,7 +146,8 @@ python3 tools/ekfsadd.py path/to/firmware-folder/plusdrive.img kick.wav snare.wa
 
 They land in `/incoming`, converted to mono; the rate is kept. The launcher then offers a rebuild.
 
-**What to try first:** a sample on a SAMPLE track from the browser; trigs, pitch, Start and Length;
+**What to try first:** a sample on a SAMPLE track from the browser; its waveform, and the lines
+moving with Start and Length; trigs and pitch;
 a 44.1 kHz file at note 60 (same pitch as recorded); saving and loading the project; another track
 or pattern with another sample; a pool sound with a sample as a sound lock; presets on other
 machines, as before.

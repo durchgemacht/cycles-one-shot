@@ -18,6 +18,10 @@
 #define SAMPLE_MACHINE 6                /* SAMPLE's index among the machines; the build sets it */
 #endif
 #define SLOTS 128
+/* Start (COLOR) and Length (SHAPE) as on the Model:Samples (0x400a62dc there): 8.8 words from 0 to
+   120.0; a trig plays from Start / 120 of the sample to (Start + Length) / 120, at most to its end. */
+#define SMP_SPAN (120 << 8)
+#define SMP_COLUMNS 128                 /* the screen's width: stretches of a sample's waveform */
 
 enum {
     SLOT_FREE,                          /* unused */
@@ -54,6 +58,10 @@ uint32_t smp_sound_ino(const char *sound);
 
 /* Audio side: the READY slot that holds the sample with this id, or 0. */
 const smp_slot *smp_find(uint32_t id);
+
+/* Screen: the state of the sample with this id (SLOT_FREE while no slot holds it) and, once READY,
+   the lowest and highest frame of each of its SMP_COLUMNS stretches (lo > hi: no frames). */
+int smp_view_state(uint32_t id, const int16_t **lo, const int16_t **hi);
 
 /* UI side. */
 void smp_ui_tick(void);

@@ -14,6 +14,8 @@ extern char host_pool[];
 extern unsigned long host_pool_size;
 extern uint32_t host_fs_mounted;
 extern void *host_fs_holder, *host_task;
+extern int host_value_shown, host_trig_held, host_track, host_main_draws, host_knob_draws;
+extern const void *host_font;
 
 void host_amp_env(char *v);
 void host_vca(int32_t *out, char *v);
@@ -27,6 +29,7 @@ void host_fs_lock(void);
 void host_fs_unlock(void);
 int32_t host_find_id(uint32_t id);
 uint32_t host_id_ino(int32_t i);
+void host_draw_text(void *bmp, void *font, int32_t x, int32_t y, int32_t flags, const char *fmt, ...);
 
 #define VOICE0              ((uintptr_t)host_voices)
 #define AMP_ENV(v)          host_amp_env(v)
@@ -55,5 +58,17 @@ uint32_t host_id_ino(int32_t i);
 #define RUNNING_TASK        host_task
 #define POOL_BEGIN          (host_pool)
 #define POOL_END            (host_pool + host_pool_size)
+#define MAIN_DRAW(v, b)     ((void)(v), (void)(b), host_main_draws++)
+#define KNOB_DRAW(v, b)     ((void)(v), (void)(b), host_knob_draws++)
+#define KNOB_PARAM(v)       (*(const int32_t *)((const char *)(v) + 0x230))
+#define VALUE_SHOWN()       (host_value_shown != 0)
+#define TRIG_HELD()         (host_trig_held != 0)
+#define selected_track()    (host_track)
+#define FONT_MAKE(f, g)     ((void)(f), host_font = (g))
+#define FONT_DROP(f)        ((void)(f))
+extern const char host_font_small[], host_font_medium[];
+#define FONT_SMALL          ((const void *)host_font_small)
+#define FONT_MEDIUM         ((const void *)host_font_medium)
+#define DRAW_TEXT           host_draw_text
 
 #endif

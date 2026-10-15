@@ -22,6 +22,9 @@
 #define BARRIER()   __asm__ volatile ("" : : : "memory")
 
 smp_slot smp_slots[SLOTS];
+/* The waveform for the screen: per slot, the lowest and highest frame of each of SMP_COLUMNS equal
+   stretches of the sample, gathered as the file is read. */
+static int16_t ov_lo[SLOTS][SMP_COLUMNS], ov_hi[SLOTS][SMP_COLUMNS];
 static uint32_t generation;             /* scans of the kits so far */
 static uint32_t live_id[6];             /* what each track's live sound named at the last tick */
 static uint32_t pv_src[SOUND_SIZE / 4]; /* the sound the browser hands to the OS */
@@ -339,6 +342,59 @@ static void mix(smp_slot *sl, uint32_t from, uint32_t n)
         pcm[f] = (int16_t)((pcm[2 * f] + pcm[2 * f + 1]) >> 1);
 }
 
+static void overview_start(const smp_slot *sl)
+{
+    int i = (int)(sl - smp_slots), c;
+
+    for (c = 0; c < SMP_COLUMNS; c++) {
+        ov_lo[i][c] = 32767;
+        ov_hi[i][c] = -32768;
+    }
+}
+
+/* Mono frames [f0, f1) of the sample are in: they go into their columns. A column covers frames
+   [c * frames / SMP_COLUMNS, (c + 1) * frames / SMP_COLUMNS); the products stay below 2^32 because
+   the pool holds at most 2^25 frames. */
+static void overview_add(const smp_slot *sl, uint32_t f0, uint32_t f1)
+{
+    const int16_t *pcm = (const int16_t *)sl->mem;
+    uint32_t frames = sl->stereo ? sl->bytes / 4 : sl->bytes / 2, c;
+    int i = (int)(sl - smp_slots);
+
+    for (c = f0 * SMP_COLUMNS / frames; c < SMP_COLUMNS; c++) {
+        uint32_t a = c * frames / SMP_COLUMNS, b = (c + 1) * frames / SMP_COLUMNS, f;
+        int16_t lo = ov_lo[i][c], hi = ov_hi[i][c];
+
+        if (a >= f1)
+            break;
+        if (a < f0)
+            a = f0;
+        if (b > f1)
+            b = f1;
+        for (f = a; f < b; f++) {
+            if (pcm[f] < lo)
+                lo = pcm[f];
+            if (pcm[f] > hi)
+                hi = pcm[f];
+        }
+        ov_lo[i][c] = lo;
+        ov_hi[i][c] = hi;
+    }
+}
+
+int smp_view_state(uint32_t id, const int16_t **lo, const int16_t **hi)
+{
+    const smp_slot *sl;
+
+    if (!(id & 1) || !(sl = slot_of(id)))
+        return SLOT_FREE;
+    if (sl->state == SLOT_READY) {
+        *lo = ov_lo[sl - smp_slots];
+        *hi = ov_hi[sl - smp_slots];
+    }
+    return (int)sl->state;
+}
+
 /* The whole file is in: a stereo one gives back the half it no longer needs, then the audio side
    may play it. */
 static void finish(smp_slot *sl)
@@ -394,6 +450,7 @@ static void load_step(void)
             if (!sl->mem)
                 continue;                       /* no room yet: let the others go on */
             sl->size = (sl->bytes + 3) & ~3u;
+            overview_start(sl);
             sl->state = SLOT_LOADING;
             /* fall through */
         case SLOT_LOADING:
@@ -412,6 +469,7 @@ static void load_step(void)
             }
             if (sl->stereo)
                 mix(sl, sl->done, n);
+            overview_add(sl, sl->done / (sl->stereo ? 4 : 2), (sl->done + n) / (sl->stereo ? 4 : 2));
             sl->done += n;
             if (sl->done == sl->bytes)
                 finish(sl);

@@ -16,8 +16,9 @@
 
    Knobs: PITCH, FINE and the trig's note set the pitch as on every machine; note 60 at PITCH 64
    and FINE 64 plays the sample as recorded (a sample at another rate keeps its pitch). COLOR =
-   start, SHAPE = length (127: to the end). SWEEP and CONTOUR do nothing yet. DECAY, GATE and PUNCH
-   are the stock amp chain. */
+   start, SHAPE = length, both 0 to 120 as on the Model:Samples (SMP_SPAN in pool.h): moving the
+   start keeps the length. SWEEP and CONTOUR do nothing yet. DECAY, GATE and PUNCH are the stock amp
+   chain. */
 #include <stdint.h>
 #include "smp_core.h"
 #include "os.h"
@@ -54,17 +55,17 @@ static uint32_t mag(int32_t x)
     return x < 0 ? 0u - (uint32_t)x : (uint32_t)x;
 }
 
-static int32_t knob(const char *p, int off)    /* 8.8 word -> 0..127 */
+static int32_t span(const char *p, int off)    /* 8.8 word -> 0..SMP_SPAN, fraction kept */
 {
-    int32_t k = P16(off) >> 8;
+    int32_t k = P16(off);
 
-    return k < 0 ? 0 : k > 127 ? 127 : k;
+    return k < 0 ? 0 : k > SMP_SPAN ? SMP_SPAN : k;
 }
 
-/* x * k / 128 for k = 0..128, without overflow for any frame count */
-static int32_t part(int32_t x, int32_t k)
+/* x * k / SMP_SPAN for k = 0..SMP_SPAN, without overflow for any frame count */
+static int32_t share(int32_t x, int32_t k)
 {
-    return (x >> 7) * k + (((x & 127) * k) >> 7);
+    return x / SMP_SPAN * k + x % SMP_SPAN * k / SMP_SPAN;
 }
 
 /* 2^(d/12) as Q16.16 for d semitones (Q16); linear within a semitone (0.7 cents at most). */
@@ -95,20 +96,24 @@ static uint32_t mul_q16(uint32_t a, uint32_t b)
     return ((ah * bh) << 16) + ah * bl + al * bh + ((al * bl) >> 16);
 }
 
-/* A trig: play the sample the note's sound names, from COLOR's start for SHAPE's length. */
+/* A trig: play the sample the note's sound names, from COLOR's start for SHAPE's length; the
+   Model:Samples' rule (0x400a62dc): the end at Start + Length, at most the sample's end. */
 static void start(int t, char *v, const char *p)
 {
     const uint16_t *k = (const uint16_t *)(TARGETS(t) + 52);   /* k 26/27: the sample's id */
     const smp_slot *sl = smp_find((uint32_t)k[0] << 16 | k[1]);
     int32_t *state = DECIMATOR_STATE(v);
-    int32_t from, i;
+    int32_t from, to, i;
 
     if (!sl) {                                  /* none, or not loaded yet: silence */
         voices[t].active = 0;
         return;
     }
-    from = part(sl->frames, knob(p, 0x16));
-    smp_trigger(&voices[t], sl->pcm, sl->frames, from, from + part(sl->frames - from, knob(p, 0x18) + 1));
+    from = span(p, 0x16);
+    to = from + span(p, 0x18);
+    if (to > SMP_SPAN)
+        to = SMP_SPAN;
+    smp_trigger(&voices[t], sl->pcm, sl->frames, share(sl->frames, from), share(sl->frames, to));
     rates[t] = sl->rate_q16;
     for (i = 0; i < 12; i++)                   /* no tail of the previous sound */
         state[i] = 0;

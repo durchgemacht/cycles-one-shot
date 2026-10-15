@@ -1,7 +1,9 @@
-/* Host tests of SAMPLE's bridge (machine/sampler.c) and sample memory (machine/pool.c), with
-   stand-ins for the OS: voices, the audio side's parameter copy, the kits, the file system. Includes
-   both files to see their state. */
+/* Host tests of SAMPLE's bridge (machine/sampler.c), sample memory (machine/pool.c) and screen view
+   (machine/view.c), with stand-ins for the OS: voices, the audio side's parameter copy, the kits, the
+   file system, the screen. Includes the files to see their state. With VIEW_PREVIEW set to a folder,
+   also writes the views it draws there as PBM pictures. */
 #include <math.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +12,7 @@
 #define SAMPLER_HOST
 #include "sampler.c"
 #include "pool.c"
+#include "view.c"
 
 static int failures;
 
@@ -36,9 +39,48 @@ _Alignas(8) char host_pool[1 << 20];
 unsigned long host_pool_size = sizeof host_pool;
 uint32_t host_fs_mounted = 1;
 void *host_fs_holder, *host_task = (void *)0x1000;
+int host_value_shown, host_trig_held, host_track, host_main_draws, host_knob_draws;
+const void *host_font;
+const char host_font_small[] = "small", host_font_medium[] = "medium";
 static int live_kit;                            /* the pattern whose kit is live */
 static int32_t states[6][12];
 static int amp_calls, dec_calls;
+
+/* The OS's text, recorded; in the pictures each character is a box (5 or 7 pixels apart, 7 high,
+   from y up, centred on x with flag 2). */
+typedef struct {
+    const void *font;
+    int x, y, flags;
+    char s[32];
+} text_call;
+static text_call texts[8];
+static int ntexts;
+
+void host_draw_text(void *bmp, void *font, int32_t x, int32_t y, int32_t flags, const char *fmt, ...)
+{
+    smp_bitmap *b = bmp;
+    text_call *t = &texts[ntexts < 8 ? ntexts++ : 7];
+    int step = host_font == FONT_SMALL ? 5 : 7, n, i, dx, dy;
+    va_list ap;
+
+    (void)font;
+    va_start(ap, fmt);
+    vsnprintf(t->s, sizeof t->s, fmt, ap);
+    va_end(ap);
+    t->font = host_font;
+    t->x = x;
+    t->y = y;
+    t->flags = flags;
+    n = (int)strlen(t->s);
+    if (flags & 2)
+        x -= n * step / 2;
+    for (i = 0; i < n; i++)
+        if (t->s[i] != ' ')
+            for (dx = 0; dx < step - 1; dx++)
+                for (dy = 0; dy < 7; dy++)
+                    if (dx == 0 || dy == 0 || dx == step - 2 || dy == 6)
+                        pixel(b, x + i * step + dx, y + dy);
+}
 
 static int track_index(char *v) { return (int)((v - host_voices) / VSTRIDE); }
 void host_amp_env(char *v) { (void)v; amp_calls++; }
@@ -201,6 +243,11 @@ static void reset_all(void)
     host_fs_holder = 0;
     memset(work_kit, 0, sizeof work_kit);
     host_play_kit = 0;
+    host_value_shown = 0;
+    host_trig_held = 0;
+    host_track = 0;
+    host_main_draws = host_knob_draws = 0;
+    ntexts = 0;
 }
 
 static int tick_until(uint32_t id, int state, int limit)
@@ -231,7 +278,7 @@ static void defaults(void)
 {
     memset(params, 0, sizeof params);
     set_param(0x14, 64 << 8);                    /* PITCH */
-    set_param(0x18, 127 << 8);                   /* SHAPE: to the end */
+    set_param(0x18, 120 << 8);                   /* Length: the whole sample */
     set_param(0x22, 64 << 8);                    /* FINE */
     params[0x24] = 127;                          /* DECAY */
 }
@@ -404,7 +451,7 @@ static void test_trig(void)
     tick_until(0x4441, SLOT_READY, 5);
     sl = smp_find(0x4441);
     CHECK(sl != 0, "loaded");
-    set_param(0x16, 32 << 8);                           /* COLOR: start a quarter in */
+    set_param(0x16, 30 << 8);                           /* Start 30 of 120: a quarter in */
     target_names(2, 0x4441);
     block(2, 1, 60 << 16, out);
     CHECK(sl && voices[2].active && voices[2].pcm == sl->pcm && voices[2].start == 2400 && voices[2].end == 9600,
@@ -418,6 +465,45 @@ static void test_trig(void)
     target_names(3, 0x4443);                            /* not loaded */
     block(3, 1, 60 << 16, out);
     CHECK(!voices[3].active, "a sample not loaded stays silent");
+}
+
+/* Start and Length as on the Model:Samples: the end at Start + Length, so moving Start keeps the
+   length; at most the sample's end; fractions count; 0.2's values past 120 count as 120. */
+static void test_start_length(void)
+{
+    static const struct {
+        int16_t start, length;
+        int32_t from, to;
+    } cases[] = {
+        { 0 << 8, 30 << 8, 0, 2400 },                   /* a quarter */
+        { 60 << 8, 30 << 8, 4800, 7200 },               /* moved on: the same 2400 frames */
+        { 100 << 8, 30 << 8, 8000, 9600 },              /* up to the end, no further */
+        { 0x0780, 0x0780, 600, 1200 },                  /* 7.5 and 7.5 */
+        { 0, 127 << 8, 0, 9600 },                       /* 0.2's default Length: all of it */
+        { 127 << 8, 120 << 8, 9600, 9600 },             /* 0.2's top Start: at the end, silent */
+        { 40 << 8, 0, 3200, 3200 },                     /* Length 0: silent */
+    };
+    int32_t out[SMP_BLOCK];
+    unsigned i;
+
+    reset_all();
+    defaults();
+    add_file(41, 0x4451, 9600, 0, 48000, ramp);
+    make_sound(host_sound(1), 41, 0x4451);
+    tick_until(0x4451, SLOT_READY, 5);
+    target_names(1, 0x4451);
+    for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        int on = cases[i].from < cases[i].to;
+
+        set_param(0x16, cases[i].start);
+        set_param(0x18, cases[i].length);
+        block(1, 1, 60 << 16, out);
+        CHECK(voices[1].active == on && (!on || (voices[1].start == cases[i].from && voices[1].end == cases[i].to)),
+              "Start %d.%02d Length %d.%02d: active %d, %d to %d, want %d to %d", cases[i].start >> 8,
+              (cases[i].start & 255) * 100 / 256, cases[i].length >> 8, (cases[i].length & 255) * 100 / 256,
+              (int)voices[1].active, (int)voices[1].start, (int)voices[1].end, (int)cases[i].from,
+              (int)cases[i].to);
+    }
 }
 
 static void test_play_kit(void)
@@ -627,6 +713,233 @@ static void test_machine_change(void)
     CHECK(!voices[3].active, "a machine change stops the sample");
 }
 
+/* --- the screen ------------------------------------------------------------------------------ */
+
+static uint32_t screen_words[128 * 2];
+static smp_bitmap screen = { 0, 128, 64, 2, screen_words };
+
+static int pix(int x, int y) { return (int)((screen_words[x * 2 + (y >> 5)] >> (31 - (y & 31))) & 1); }
+
+/* a 220 Hz tone that swells for 30 ms and dies away over hit_frames; loudest past column 0 */
+static uint32_t hit_frames;
+static int16_t hit(uint32_t i)
+{
+    double env = i < 1440 ? i / 1440.0 : exp(-4.0 * (i - 1440) / hit_frames);
+
+    return (int16_t)lrint(30000.0 * env * sin(2 * 3.14159265358979 * 220.0 * i / 48000.0));
+}
+
+static void set_knob(char *sound, int at, int value)
+{
+    int16_t w = (int16_t)(value << 8);
+
+    memcpy(sound + at, &w, 2);
+}
+
+/* With VIEW_PREVIEW set to a folder: the screen as a PBM picture there. */
+static void preview(const char *name)
+{
+    const char *dir = getenv("VIEW_PREVIEW");
+    char path[512];
+    FILE *f;
+    int x, y;
+
+    if (!dir)
+        return;
+    snprintf(path, sizeof path, "%s/%s.pbm", dir, name);
+    if (!(f = fopen(path, "w")))
+        return;
+    fprintf(f, "P1\n128 64\n");
+    for (y = 63; y >= 0; y--) {
+        for (x = 0; x < 128; x++)
+            fputc(pix(x, y) ? '1' : '0', f);
+        fputc('\n', f);
+    }
+    fclose(f);
+}
+
+/* The columns of a READY slot against a count over its frames. */
+static int overview_errors(const smp_slot *sl)
+{
+    int i = (int)(sl - smp_slots), bad = 0;
+    uint32_t c, f;
+
+    for (c = 0; c < SMP_COLUMNS; c++) {
+        uint32_t a = c * (uint32_t)sl->frames / SMP_COLUMNS, b = (c + 1) * (uint32_t)sl->frames / SMP_COLUMNS;
+        int16_t lo = 32767, hi = -32768;
+
+        for (f = a; f < b; f++) {
+            if (sl->pcm[f] < lo)
+                lo = sl->pcm[f];
+            if (sl->pcm[f] > hi)
+                hi = sl->pcm[f];
+        }
+        bad += ov_lo[i][c] != lo || ov_hi[i][c] != hi;
+    }
+    return bad;
+}
+
+static void test_overview(void)
+{
+    smp_slot *sl;
+    int i, empty = 0;
+
+    reset_all();
+    add_file(110, 0xb101, 1000, 0, 48000, ramp);
+    make_sound(host_sound(0), 110, 0xb101);
+    tick_until(0xb101, SLOT_READY, 5);
+    sl = slot_of(0xb101);
+    CHECK(sl && overview_errors(sl) == 0, "a short mono sample's columns");
+
+    reset_all();
+    add_file(111, 0xb103, 2 * 150001, 1, 48000, lr);     /* five reads, mixed as they come */
+    make_sound(host_sound(0), 111, 0xb103);
+    tick_until(0xb103, SLOT_READY, 10);
+    sl = slot_of(0xb103);
+    CHECK(sl && overview_errors(sl) == 0, "a long stereo sample's columns, after mixing");
+
+    reset_all();
+    add_file(112, 0xb105, 50, 0, 48000, ramp);           /* fewer frames than columns */
+    make_sound(host_sound(0), 112, 0xb105);
+    tick_until(0xb105, SLOT_READY, 5);
+    sl = slot_of(0xb105);
+    for (i = 0; sl && i < SMP_COLUMNS; i++)
+        empty += ov_lo[sl - smp_slots][i] > ov_hi[sl - smp_slots][i];
+    CHECK(sl && overview_errors(sl) == 0 && empty == SMP_COLUMNS - 50, "50 frames fill 50 columns: %d empty", empty);
+}
+
+static void test_view(void)
+{
+    char *s, view[0x240];
+    int32_t p;
+    int x, y, ok, any, below, pairs;
+
+    reset_all();
+    hit_frames = 48000;
+    add_file(120, 0xc101, 48000, 0, 48000, hit);
+    s = host_sound(2);
+    make_sound(s, 120, 0xc101);
+    memcpy(s + 4, "KICK 01", 8);
+    tick_until(0xc101, SLOT_READY, 5);
+    host_track = 2;
+
+    set_knob(s, 42, 0);
+    set_knob(s, 44, 120);
+    smp_main_draw(0, &screen);
+    CHECK(host_main_draws == 0, "the main screen of a SAMPLE track is ours");
+    CHECK(ntexts == 1 && !strcmp(texts[0].s, "KICK 01") && texts[0].font == FONT_SMALL && texts[0].x == 1 &&
+          texts[0].y == NAME_Y && texts[0].flags == 0, "its name, small, top left");
+    CHECK(pix(0, RULE_Y) && !pix(1, RULE_Y) && pix(126, RULE_Y), "a dotted line under the name");
+    for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
+        ok &= pix(0, y);
+    CHECK(ok, "the start in column 0, a solid line");
+    for (any = 0, below = 0, x = 1; x < 127; x++) {
+        any |= pix(x, WAVE_MID + WAVE_HALF) || pix(x, WAVE_MID - WAVE_HALF);
+        below |= pix(x, WAVE_MID - WAVE_HALF - 1);
+    }
+    CHECK(any && !below, "drawn to its own peak, no further");
+    for (ok = 1, x = 0; x < 128; x++)
+        for (y = RULE_Y + 1; y < NAME_Y; y++)
+            ok &= !pix(x, y);
+    CHECK(ok, "nothing between the line and the name");
+    preview("view-full");
+
+    /* Start 30, Length 45 of 120: columns 32 to 79 play (75 / 120 * 128 = 80) */
+    set_knob(s, 42, 30);
+    set_knob(s, 44, 45);
+    smp_main_draw(0, &screen);
+    for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
+        ok &= pix(32, y) && (y & 1 || pix(79, y));
+    CHECK(ok, "a solid line at 32, a dotted one at 79");
+    for (pairs = 0, y = 0; y < RULE_Y - 1; y++)
+        pairs += pix(10, y) && pix(10, y + 1);
+    CHECK(pairs == 0, "before the start every other pixel");
+    for (pairs = 0, y = 0; y < RULE_Y - 1; y++)
+        pairs += pix(50, y) && pix(50, y + 1);
+    CHECK(pairs > 0, "the played part in full");
+    preview("view-start-length");
+
+    /* Start 60: the same 48 columns, 64 to 111 */
+    set_knob(s, 42, 60);
+    smp_main_draw(0, &screen);
+    for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
+        ok &= pix(64, y) && (y & 1 || pix(111, y));
+    CHECK(ok, "moving Start keeps the length: a solid line at 64, a dotted one at 111");
+    for (pairs = 0, y = 0; y < RULE_Y - 1; y++)
+        pairs += pix(40, y) && pix(40, y + 1);
+    CHECK(pairs == 0, "column 40 is before the start now");
+
+    /* Start 120: the start at the very end, nothing plays */
+    set_knob(s, 42, 120);
+    smp_main_draw(0, &screen);
+    for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
+        ok &= pix(127, y);
+    for (pairs = 0, x = 0; x < 127; x++)
+        for (y = 0; y < RULE_Y - 1; y++)
+            pairs += pix(x, y) && pix(x, y + 1);
+    CHECK(ok && pairs == 0, "Start 120: the line at the last column, nothing in full");
+
+    /* turning Start or Length shows the view, other knobs their value */
+    memset(view, 0, sizeof view);
+    host_value_shown = 1;
+    for (p = DESC_START; p <= DESC_LENGTH; p++) {
+        memcpy(view + 0x230, &p, 4);
+        smp_knob_draw(view, &screen);
+    }
+    CHECK(host_knob_draws == 0, "Start and Length move the markers");
+    p = 42;
+    memcpy(view + 0x230, &p, 4);
+    smp_knob_draw(view, &screen);
+    CHECK(host_knob_draws == 1, "another knob shows its value");
+    p = DESC_START;
+    memcpy(view + 0x230, &p, 4);
+    host_trig_held = 1;
+    smp_knob_draw(view, &screen);
+    host_trig_held = 0;
+    CHECK(host_knob_draws == 2, "with a trig held, Start shows its locked value");
+    smp_main_draw(0, &screen);
+    CHECK(host_main_draws == 1, "while a value shows, the main screen is the stock one");
+
+    /* tracks on other machines, and no track */
+    host_value_shown = 0;
+    host_track = 3;
+    smp_main_draw(0, &screen);
+    host_value_shown = 1;
+    p = DESC_START;
+    memcpy(view + 0x230, &p, 4);
+    smp_knob_draw(view, &screen);
+    host_track = -1;
+    host_value_shown = 0;
+    smp_main_draw(0, &screen);
+    CHECK(host_main_draws == 3 && host_knob_draws == 3, "other machines keep the stock views");
+}
+
+static void test_view_states(void)
+{
+    char *s;
+
+    reset_all();
+    host_track = 1;
+    s = host_sound(1);
+    s[38] = SAMPLE_MACHINE;
+    memcpy(s + 4, "INIT", 5);
+    smp_main_draw(0, &screen);
+    CHECK(ntexts == 1 && !strcmp(texts[0].s, "NO SAMPLE") && texts[0].font == FONT_MEDIUM && texts[0].x == 64 &&
+          texts[0].flags == 2, "no sample yet, so no name either: %d texts, %s", ntexts, ntexts ? texts[0].s : "-");
+    preview("view-no-sample");
+
+    make_sound(s, 130, 0xd101);
+    memcpy(s + 4, "GONE", 5);
+    ntexts = 0;
+    smp_main_draw(0, &screen);
+    CHECK(ntexts == 2 && !strcmp(texts[1].s, "LOADING"), "named but not loaded: %s", ntexts > 1 ? texts[1].s : "-");
+    tick_until(0xd101, SLOT_FAILED, 3);
+    ntexts = 0;
+    smp_main_draw(0, &screen);
+    CHECK(ntexts == 2 && !strcmp(texts[1].s, "NOT FOUND"), "not on the drive: %s", ntexts > 1 ? texts[1].s : "-");
+    preview("view-not-found");
+}
+
 int main(void)
 {
     test_browser();
@@ -644,6 +957,10 @@ int main(void)
     test_lock();
     test_drive_guard();
     test_rate_pitch();
+    test_start_length();
+    test_overview();
+    test_view();
+    test_view_states();
     test_machine_change();
     drop_files();
     CHECK(nested == 0, "file system calls under the lock, or the index without it: %d", nested);
@@ -651,6 +968,6 @@ int main(void)
         printf("%d check(s) failed\n", failures);
         return 1;
     }
-    printf("all bridge and pool tests passed\n");
+    printf("all bridge, pool and view tests passed\n");
     return 0;
 }

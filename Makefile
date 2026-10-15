@@ -41,7 +41,8 @@ $(B)/render: tools/render.c tools/design.c tools/design.h $(CORE) src/smp_core.h
 
 render: $(B)/render
 
-MACHINE := machine/sampler.c machine/pool.c machine/pool.h machine/os.h machine/host_os.h
+MACHINE := machine/sampler.c machine/pool.c machine/pool.h machine/view.c machine/view.h machine/os.h \
+           machine/host_os.h
 
 $(B)/test_sampler: machine/test_sampler.c $(MACHINE) $(CORE) src/smp_core.h | $(B)
 	$(CC) -std=c11 -O2 -Wall -Wextra -DSMP_DEBUG -Isrc -Imachine -o $@ machine/test_sampler.c $(CORE) -lm
