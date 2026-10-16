@@ -6,7 +6,7 @@ Cycles as a 7th machine, SAMPLE. It plays samples from the +Drive: you choose on
 PRESET browser, and it is saved with the sound. Version 0.4 shows a SAMPLE track's sample on the
 screen as a waveform, with its start and end marked.
 
-**Status (2026-10-15):**
+**Status (2026-10-17):**
 
 - Sound core and table: done and tested on the host. Every frame is checked bit for bit against an
   independent reference, DC passes exactly, and playback stops cleanly at the end.
@@ -22,15 +22,16 @@ screen as a waveform, with its start and end marked.
   MACHINES page, samples open from the browser and play, PITCH, Start and Length work, several
   tracks play different samples, a saved project plays its samples again after switching the
   device off and on, sounds take the sample's name, and sample locks work.
-- Machine 0.4 (the waveform view; Start and Length as on the Model:Samples): builds into an OS
-  image that passes every check of the build. The view passes its host tests: the waveform columns
-  against the sample, the markers, the name and the messages, and which screens it takes over.
-  Tested in the digiemu emulator (2026-10-15): the waveform view with its name and messages, the
-  lines following COLOR and SHAPE, the value window for other knobs and for locks, the stock
-  screens on other machines, and Start and Length as on the Model:Samples. Not yet tried on a
-  Model:Cycles. Since then the name sits in a bar like the title of the OS's own browser (pixel for
-  pixel against a digiemu screenshot), the part a trig does not play shows as a staggered grid of
-  dots, and both edges of what a trig plays fade over 4 ms; tried in digiemu (2026-10-17).
+- Machine 0.4 (the waveform view; Start and Length as on the Model:Samples; 4 ms fades): builds
+  into an OS image that passes every check of the build. The view passes its host tests: the
+  waveform columns against the sample, the markers, the name and the messages, and which screens
+  it takes over; the core's tests check every frame, fades included. Tested in the digiemu
+  emulator (2026-10-15 and 2026-10-17): the waveform view with its name in a bar like the title of
+  the OS's own browser (pixel for pixel against a digiemu screenshot) and its messages, the lines
+  following COLOR and SHAPE, the staggered grid of dots for the part a trig does not play, the
+  value window for other knobs and for locks, the stock screens on other machines, Start and Length
+  as on the Model:Samples, and the 4 ms fades at both edges of what a trig plays. Tested on a
+  Model:Cycles (2026-10-17).
 - Upload page 0.1 (`uploader/`): puts audio files on the +Drive over USB. Its protocol code and the
   whole page pass their host tests against a stand-in Cycles. Tested with a Model:Cycles running
   SAMPLE 0.2 (2026-10-14, Chrome on macOS): it connects, lists the +Drive, makes a folder and uploads
