@@ -1,5 +1,6 @@
 /* Host tests of the one-shot core. Built with SMP_DEBUG, so the core also asserts that its inner
    loop stays inside the frames it fetched. */
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,54 @@ static int64_t reference(const int16_t *pcm, int32_t start, int32_t end, uint64_
         acc += (int64_t)c[t] * ((j >= start && j < end) ? pcm[j] : 0);
     }
     return acc;
+}
+
+/* The fades as smp_core.h describes them: a fade's gain n frames in (Q15, the S curve 3x^2 - 2x^3,
+   test_fade_curve holds it against the real curve), the frames until the playhead P reaches the
+   end at this step (rounded up), and a frame scaled towards zero by the fade-in n frames after the
+   trig and the fade-out rem frames before the end. */
+static uint32_t gain(int64_t n)
+{
+    uint32_t x;
+
+    if (n <= 0)
+        return 0;
+    if (n >= SMP_FADE)
+        return 32768;
+    x = (uint32_t)(n * (((1 << 25) + SMP_FADE - 1) / SMP_FADE)) >> 10;
+    return ((x * x >> 15) * (3u * 32768 - 2 * x)) >> 15;
+}
+
+static int64_t frames_left(int32_t end, uint64_t P, uint64_t step)
+{
+    uint64_t E = (uint64_t)end << 32;
+
+    return P >= E ? 0 : (int64_t)((E - P + step - 1) / step);
+}
+
+static int64_t faded(int64_t raw, int64_t n, int64_t rem)
+{
+    uint64_t g = gain(n), m = (uint64_t)(raw < 0 ? -raw : raw);
+
+    if (n >= SMP_FADE && rem >= SMP_FADE)
+        return raw;
+    if (rem < SMP_FADE)
+        g = g * gain(rem) >> 15;
+    return raw < 0 ? -(int64_t)(m * g >> 15) : (int64_t)(m * g >> 15);
+}
+
+static void test_fade_curve(void)
+{
+    int n, bad = 0, down = 0;
+
+    for (n = 0; n <= SMP_FADE; n++) {
+        double x = (double)n / SMP_FADE, s = x * x * (3 - 2 * x);
+
+        bad += fabs(gain(n) / 32768.0 - s) > 5.0 / 32768;     /* integer steps: about 4 at worst */
+        down += n > 0 && gain(n) < gain(n - 1);
+    }
+    CHECK(gain(0) == 0 && gain(SMP_FADE) == 32768 && bad == 0 && down == 0,
+          "fade curve: %d points off 3x^2 - 2x^3, %d steps down", bad, down);
 }
 
 static void test_table(void)
@@ -91,6 +140,7 @@ static void test_exact(void)
     for (run = 0; run < 400; run++) {
         int32_t start = (int32_t)(rnd() % LEN), end = start + (int32_t)(rnd() % 3000);
         int blocks = 0, active = 1;
+        int64_t n = 0;                          /* frames since the trig */
         uint64_t P;
         smp_voice v;
 
@@ -116,16 +166,21 @@ static void test_exact(void)
                 break;
             }
             for (k = 0; k < SMP_BLOCK2X; k++) {
-                int64_t want = active ? reference(pcm, start, end, P) : 0;
+                int64_t raw = active ? reference(pcm, start, end, P) : 0, in = start > 0 ? n : SMP_FADE;
+                int64_t rem = frames_left(end, P, step);
+                /* the core may count one frame more to the end */
+                int64_t want = active ? faded(raw, in, rem) : 0, alt = active ? faded(raw, in, rem + 1) : 0;
 
-                if (out[k] != want) {
+                if (out[k] != want && out[k] != alt) {
                     CHECK(0, "run %d block %d frame %d: %ld, want %lld", run, blocks, k, (long)out[k],
                           (long long)want);
                     active = 0;
                     break;
                 }
-                if (active)
+                if (active) {
                     P += step;
+                    n++;
+                }
             }
             blocks++;
         }
@@ -136,7 +191,8 @@ static void test_exact(void)
     }
 }
 
-/* DC: wherever all six taps lie inside the window, the frame is exactly level << 15. */
+/* DC: wherever all six taps lie inside the window and the fade-out has not begun, the frame is
+   exactly level << 15. */
 static void test_dc(void)
 {
     enum { LEN = 5000 };
@@ -160,11 +216,58 @@ static void test_dc(void)
             for (k = 0; k < SMP_BLOCK2X; k++, P += step) {
                 int64_t i = (int64_t)(P >> 32);
 
-                if (i - 2 >= 0 && i + 3 < LEN && out[k] != -21000 * 32768)
+                if (i - 2 >= 0 && i + 3 < LEN && frames_left(LEN, P, step) > SMP_FADE && out[k] != -21000 * 32768)
                     bad++;
             }
         }
         CHECK(bad == 0, "ratio %u: %d frames off the DC level", ratios[r], bad);
+    }
+}
+
+/* The fades on a DC sample: a start past frame 0 fades in from silence, half way at half the
+   fade; a start at frame 0 does not fade in; the fade-out takes SMP_FADE frames at every pitch. */
+static void test_fades(void)
+{
+    enum { LEN = 20000, LEVEL = 20000 };
+    static int16_t pcm[LEN], scratch[SMP_SCRATCH];
+    static const uint32_t ratios[] = { 1u << 15, 1u << 16, 3u << 16, SMP_MAX_RATIO_Q16 };
+    int32_t out[SMP_BLOCK2X], frames[2 * SMP_FADE];
+    unsigned r;
+    int k, j;
+
+    for (k = 0; k < LEN; k++)
+        pcm[k] = LEVEL;
+    for (j = 0; j < 2; j++) {
+        smp_voice v;
+        int n = 0;
+
+        smp_trigger(&v, pcm, LEN, j ? 0 : 100, LEN);
+        smp_set_ratio(&v, 1u << 16);
+        while (n < 2 * SMP_FADE && smp_render(&v, out, scratch))
+            for (k = 0; k < SMP_BLOCK2X; k++)
+                frames[n++] = out[k];
+        if (j == 0)
+            CHECK(frames[0] == 0 && fabs(frames[SMP_FADE / 2] / (LEVEL * 32768.0) - 0.5) < 0.001 &&
+                  frames[SMP_FADE + 8] == LEVEL * 32768, "start 100: fades in over %d frames", SMP_FADE);
+        else
+            CHECK(frames[8] == LEVEL * 32768, "start 0: no fade-in");
+    }
+    for (r = 0; r < sizeof ratios / sizeof ratios[0]; r++) {
+        smp_voice v;
+        int first = -1, last = -1, n = 0;
+
+        smp_trigger(&v, pcm, LEN, 0, LEN);
+        smp_set_ratio(&v, ratios[r]);
+        while (smp_render(&v, out, scratch))
+            for (k = 0; k < SMP_BLOCK2X; k++, n++) {
+                if (n > 8 && out[k] != LEVEL * 32768 && first < 0)
+                    first = n;
+                if (out[k])
+                    last = n;
+            }
+        /* the S curve stays below one step of the level for its first and last 2 frames */
+        CHECK(first > 0 && last - first + 1 >= SMP_FADE - 5 && last - first + 1 <= SMP_FADE + 1,
+              "ratio %u: the fade-out takes %d frames", ratios[r], last - first + 1);
     }
 }
 
@@ -194,10 +297,12 @@ static void test_finished(void)
 
 int main(void)
 {
+    test_fade_curve();
     test_table();
     test_ratio();
     test_exact();
     test_dc();
+    test_fades();
     test_finished();
     if (failures) {
         printf("%d check(s) failed\n", failures);

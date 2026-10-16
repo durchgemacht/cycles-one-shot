@@ -1,7 +1,8 @@
 /* Host tests of SAMPLE's bridge (machine/sampler.c), sample memory (machine/pool.c) and screen view
    (machine/view.c), with stand-ins for the OS: voices, the audio side's parameter copy, the kits, the
    file system, the screen. Includes the files to see their state. With VIEW_PREVIEW set to a folder,
-   also writes the views it draws there as PBM pictures. */
+   also writes the views it draws there as PBM pictures; with VIEW_OS set to the unpacked MAIN OS
+   1.13 as well, their text uses the OS's own fonts. */
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -47,7 +48,7 @@ static int32_t states[6][12];
 static int amp_calls, dec_calls;
 
 /* The OS's text, recorded; in the pictures each character is a box (5 or 7 pixels apart, 7 high,
-   from y up, centred on x with flag 2). */
+   from y up, centred on x with flag 2), or the OS's own glyph (VIEW_OS, below). */
 typedef struct {
     const void *font;
     int x, y, flags;
@@ -55,6 +56,65 @@ typedef struct {
 } text_call;
 static text_call texts[8];
 static int ntexts;
+
+/* With VIEW_OS set to the unpacked MAIN OS 1.13, the pictures use its own glyphs. Glyphs of a font
+   (FONT_SMALL 0x40140ab0, FONT_MEDIUM 0x4014120c): +4 the height, +8 a byte of width per character,
+   +12 per character the 16-bit number of its first column, +16 the columns as 16-bit words, the
+   bottom row in bit 15. The OS leaves a column free after each character; a text is as wide as its
+   characters and the gaps between them (0x40072152). */
+static unsigned char *os_image;
+static unsigned long os_size;
+
+static uint32_t os_be(uint32_t va, int n)
+{
+    uint32_t v = 0, at = va - 0x40000400;
+
+    if (at + (uint32_t)n > os_size)
+        return 0;
+    while (n--)
+        v = v << 8 | os_image[at++];
+    return v;
+}
+
+static int os_glyphs(void)
+{
+    static int tried;
+    const char *path = getenv("VIEW_OS");
+    FILE *f;
+
+    if (!tried && path && (f = fopen(path, "rb"))) {
+        fseek(f, 0, SEEK_END);
+        os_size = (unsigned long)ftell(f);
+        fseek(f, 0, SEEK_SET);
+        os_image = malloc(os_size);
+        if (fread(os_image, 1, os_size, f) != os_size)
+            os_size = 0;
+        fclose(f);
+    }
+    tried = 1;
+    return os_size > 0;
+}
+
+static void os_text(smp_bitmap *b, uint32_t glyphs, int x, int y, int flags, const char *s)
+{
+    uint32_t h = os_be(glyphs + 4, 4), adv = os_be(glyphs + 8, 4), first = os_be(glyphs + 12, 4);
+    uint32_t data = os_be(glyphs + 16, 4), r, i;
+    const unsigned char *c;
+    int width = 0;
+
+    for (c = (const unsigned char *)s; *c; c++)
+        width += (int)os_be(adv + *c, 1) + (c[1] != 0);
+    if (flags & 2)
+        x -= width / 2;
+    for (c = (const unsigned char *)s; *c; c++, x++) {
+        uint32_t n = os_be(adv + *c, 1), col = os_be(first + 2 * *c, 2);
+
+        for (i = 0; i < n; i++, x++)
+            for (r = 0; r < h; r++)
+                if (os_be(data + 2 * (col + i), 2) >> (15 - r) & 1)
+                    pixel(b, x, y + (int)r);
+    }
+}
 
 void host_draw_text(void *bmp, void *font, int32_t x, int32_t y, int32_t flags, const char *fmt, ...)
 {
@@ -71,6 +131,10 @@ void host_draw_text(void *bmp, void *font, int32_t x, int32_t y, int32_t flags, 
     t->x = x;
     t->y = y;
     t->flags = flags;
+    if (getenv("VIEW_PREVIEW") && os_glyphs()) {
+        os_text(b, host_font == FONT_SMALL ? 0x40140ab0 : 0x4014120c, x, y, flags, t->s);
+        return;
+    }
     n = (int)strlen(t->s);
     if (flags & 2)
         x -= n * step / 2;
@@ -827,9 +891,17 @@ static void test_view(void)
     set_knob(s, 44, 120);
     smp_main_draw(0, &screen);
     CHECK(host_main_draws == 0, "the main screen of a SAMPLE track is ours");
-    CHECK(ntexts == 1 && !strcmp(texts[0].s, "KICK 01") && texts[0].font == FONT_SMALL && texts[0].x == 1 &&
+    CHECK(ntexts == 1 && !strcmp(texts[0].s, "KICK 01") && texts[0].font == FONT_SMALL && texts[0].x == NAME_X &&
           texts[0].y == NAME_Y && texts[0].flags == 0, "its name, small, top left");
-    CHECK(pix(0, RULE_Y) && !pix(1, RULE_Y) && pix(126, RULE_Y), "a dotted line under the name");
+    CHECK(pix(BAR_X + 1, BAR_Y) && pix(64, BAR_TOP) && pix(BAR_X + BAR_W - 2, BAR_TOP) && pix(BAR_X, BAR_Y + 1) &&
+          pix(BAR_X + BAR_W - 1, BAR_TOP - 1), "a lit bar on top");
+    CHECK(!pix(BAR_X, BAR_Y) && !pix(BAR_X + BAR_W - 1, BAR_Y) && !pix(BAR_X, BAR_TOP) &&
+          !pix(BAR_X + BAR_W - 1, BAR_TOP), "its corners dark");
+    for (ok = 1, x = 0; x < 128; x++)
+        for (y = BAR_Y; y < 64; y++)
+            ok &= !pix(x, y) || (x >= BAR_X && x < BAR_X + BAR_W && y <= BAR_TOP);
+    CHECK(ok && BAR_X == 0 && BAR_W == 128 && BAR_TOP == 63 && BAR_Y == 51, "the browser's bar: 128 x 13 from the top");
+    CHECK(!pix(NAME_X, NAME_Y) && pix(NAME_X - 1, NAME_Y), "the name in dark letters on it");
     for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
         ok &= pix(0, y);
     CHECK(ok, "the start in column 0, a solid line");
@@ -839,9 +911,9 @@ static void test_view(void)
     }
     CHECK(any && !below, "drawn to its own peak, no further");
     for (ok = 1, x = 0; x < 128; x++)
-        for (y = RULE_Y + 1; y < NAME_Y; y++)
+        for (y = WAVE_MID + WAVE_HALF + 1; y < BAR_Y; y++)
             ok &= !pix(x, y);
-    CHECK(ok, "nothing between the line and the name");
+    CHECK(ok && BAR_Y - (WAVE_MID + WAVE_HALF + 1) == 1, "a free row between the waveform and the bar");
     preview("view-full");
 
     /* Start 30, Length 45 of 120: columns 32 to 79 play (75 / 120 * 128 = 80) */
@@ -851,10 +923,16 @@ static void test_view(void)
     for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
         ok &= pix(32, y) && (y & 1 || pix(79, y));
     CHECK(ok, "a solid line at 32, a dotted one at 79");
-    for (pairs = 0, y = 0; y < RULE_Y - 1; y++)
-        pairs += pix(10, y) && pix(10, y + 1);
-    CHECK(pairs == 0, "before the start every other pixel");
-    for (pairs = 0, y = 0; y < RULE_Y - 1; y++)
+    for (pairs = 0, any = 0, x = 1; x < 31; x++)
+        for (y = 1; y < WAVE_MID + WAVE_HALF; y++) {
+            pairs += pix(x, y) && (pix(x + 1, y) || pix(x, y + 1) || pix(x + 1, y + 1) || pix(x - 1, y + 1));
+            any += pix(x, y);
+        }
+    for (ok = 1, x = 1; x < 31; x++)
+        ok &= pix(x, WAVE_MID) == !(x & 1) && !pix(x, WAVE_MID + 1) && !pix(x, WAVE_MID - 1) &&
+              pix(x, WAVE_MID + 2) == (x & 1) && pix(x, WAVE_MID - 2) == (x & 1);
+    CHECK(pairs == 0 && any > 0 && ok, "before the start a quarter of the pixels, staggered row by row, the zero line dotted");
+    for (pairs = 0, y = 0; y < WAVE_MID + WAVE_HALF; y++)
         pairs += pix(50, y) && pix(50, y + 1);
     CHECK(pairs > 0, "the played part in full");
     preview("view-start-length");
@@ -865,7 +943,7 @@ static void test_view(void)
     for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
         ok &= pix(64, y) && (y & 1 || pix(111, y));
     CHECK(ok, "moving Start keeps the length: a solid line at 64, a dotted one at 111");
-    for (pairs = 0, y = 0; y < RULE_Y - 1; y++)
+    for (pairs = 0, y = 0; y < WAVE_MID + WAVE_HALF; y++)
         pairs += pix(40, y) && pix(40, y + 1);
     CHECK(pairs == 0, "column 40 is before the start now");
 
@@ -875,7 +953,7 @@ static void test_view(void)
     for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
         ok &= pix(127, y);
     for (pairs = 0, x = 0; x < 127; x++)
-        for (y = 0; y < RULE_Y - 1; y++)
+        for (y = 0; y < WAVE_MID + WAVE_HALF; y++)
             pairs += pix(x, y) && pix(x, y + 1);
     CHECK(ok && pairs == 0, "Start 120: the line at the last column, nothing in full");
 
@@ -926,6 +1004,7 @@ static void test_view_states(void)
     smp_main_draw(0, &screen);
     CHECK(ntexts == 1 && !strcmp(texts[0].s, "NO SAMPLE") && texts[0].font == FONT_MEDIUM && texts[0].x == 64 &&
           texts[0].flags == 2, "no sample yet, so no name either: %d texts, %s", ntexts, ntexts ? texts[0].s : "-");
+    CHECK(pix(NAME_X, NAME_Y) && pix(64, BAR_TOP) && !pix(BAR_X, BAR_TOP), "the bar without a name");
     preview("view-no-sample");
 
     make_sound(s, 130, 0xd101);

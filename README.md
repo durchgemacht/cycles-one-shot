@@ -28,7 +28,9 @@ screen as a waveform, with its start and end marked.
   Tested in the digiemu emulator (2026-10-15): the waveform view with its name and messages, the
   lines following COLOR and SHAPE, the value window for other knobs and for locks, the stock
   screens on other machines, and Start and Length as on the Model:Samples. Not yet tried on a
-  Model:Cycles.
+  Model:Cycles. Since then the name sits in a bar like the title of the OS's own browser (pixel for
+  pixel against a digiemu screenshot), the part a trig does not play shows as a staggered grid of
+  dots, and both edges of what a trig plays fade over 4 ms; tried in digiemu (2026-10-17).
 - Upload page 0.1 (`uploader/`): puts audio files on the +Drive over USB. Its protocol code and the
   whole page pass their host tests against a stand-in Cycles. Tested with a Model:Cycles running
   SAMPLE 0.2 (2026-10-14, Chrome on macOS): it connects, lists the +Drive, makes a folder and uploads
@@ -54,7 +56,9 @@ Start and Length work as on the Model:Samples (its OS computes the same at `0x40
 each, so 120 splits evenly into slices: Length 15 and Start 0, 15, 30 … play 8 equal parts, Length
 10 and Start 0, 10, 20 … play 12. Sounds saved with version 0.2 counted both in 128ths of the
 sample, Length of the rest after Start; they keep their values, which now count as above, and
-values past 120 count as 120. Length 127, 0.2's default, still plays to the end.
+values past 120 count as 120. Length 127, 0.2's default, still plays to the end. Both edges of
+what a trig plays fade over 4 ms against clicks, the start only when it lies past the sample's
+first frame (see [Fades](#how-it-plays)).
 
 **Choosing a sample.** Set a track to SAMPLE, open the PRESET browser and open a sample file on the
 +Drive. The track's sound keeps its settings and now names that file. As for presets, the browser
@@ -64,14 +68,15 @@ header, then 16-bit big-endian PCM. A stereo file plays as mono (left and right 
 machine, and for presets, the browser works as before.
 
 **The screen.** While a SAMPLE track is selected, the main screen shows the sample as a waveform
-across the whole width, scaled to the sample's own peak, and the sound's name above it, which the
-browser set to the sample's name. A solid line marks where a trig starts (COLOR), a dotted line
-where it stops (SHAPE); the part in between is drawn in full, the rest in every other pixel.
+across the whole width, scaled to the sample's own peak. A lit bar with rounded corners along the
+top holds the sound's name in dark letters; the browser set it to the sample's name. A solid line marks where a trig starts (COLOR), a dotted line
+where it stops (SHAPE); the part in between is drawn in full, the rest as a staggered grid of dots
+(every other pixel of every other row, one pixel further on from row to row).
 Turning COLOR or SHAPE moves the lines while you turn, in place of the usual value window. Any
 other knob shows its value as before, and so do Start and Length while you hold a trig to lock
 them: the value window then shows the locked value. Tracks on other machines keep the stock
-screens. Until a sample is chosen the screen says only NO SAMPLE, without a name; while it loads it
-says LOADING, and NOT FOUND if the file is not on the +Drive.
+screens. Until a sample is chosen the bar stays empty and the screen says NO SAMPLE; while it loads
+it says LOADING, and NOT FOUND if the file is not on the +Drive.
 
 **Sample locks.** In the browser, select a sample, then hold a step of the SAMPLE track and open
 the sample. As for presets, the browser puts the sound into the sound pool (the LOCKS folder, where
@@ -134,7 +139,8 @@ and writes into free space that the OS still points at are refused. The result i
 (checksums, HMAC, MAIN OS); with `--tool`, elektron-firmware-tool checks it again. Built against
 Modded-Cycles commit `6a9742a`. `make machine-test` runs the host tests of the bridge, the sample
 memory and the view, with stand-ins for the OS; with `VIEW_PREVIEW` set to a folder, it also writes
-the views it draws there as PBM pictures.
+the views it draws there as PBM pictures, and with `VIEW_OS` set to the unpacked MAIN OS 1.13 as
+well, their text uses the OS's own fonts.
 
 **Trying it in digiemu.** digiemu's LOAD SAMPLES button is on the Model:Samples only. For the
 Cycles, put WAV files on the emulated +Drive with digiemu's own tool, while digiemu is closed, after
@@ -198,8 +204,19 @@ The Model:Samples OS 1.13 plays a sample in two stages, and this core uses the s
 
 The playhead is 32.32 fixed point. Before each block the core copies the frames it will read into a
 scratch buffer and puts silence wherever they fall outside the start–end window, so the inner loop
-needs no bounds checks. The voice switches off once every tap has passed the end. A full-scale sample frame comes out as
-`32767 << 15`, half of Q31, the level Cycles machines hand to the decimator.
+needs no bounds checks. The voice switches off once every tap has passed the end. A full-scale
+sample frame comes out as `32767 << 15`, half of Q31, the level Cycles machines hand to the
+decimator.
+
+**Fades.** Neither edge of the window clicks. When Start lies past the sample's first frame, the
+sound fades in over 4 ms; every window fades out over the 4 ms before the playhead reaches its end.
+Both fades follow the S curve 3x² − 2x³ and count frames at 96 kHz (384), so they last 4 ms at any
+pitch. A window that starts at the sample's first frame keeps its attack as recorded, so drum hits
+lose nothing. The values follow common practice: Ableton Live fades clip edges by up to 4 ms, FL
+Studio's sampler fades out over 10 ms by default and keeps drum attacks in its transient mode.
+Outside the fades every frame is the plain filter result. A new trig on a sounding track still cuts
+the old sound the way every Cycles machine does: the stock amp chain ramps it to silence within
+the 0.67 ms block of the trig.
 
 **Cost:** with gcc 16 at `-O2` the inner loop takes 31 instructions per frame, about 2,200 per
 track and block. The decimator adds about 520. For comparison, a TONE voice takes 5,291

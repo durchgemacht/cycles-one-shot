@@ -28,7 +28,7 @@ $(B):
 	mkdir -p $(B)
 
 $(B)/test_core: tests/test_core.c $(CORE) src/smp_core.h | $(B)
-	$(CC) $(CFLAGS) -DSMP_DEBUG -o $@ tests/test_core.c $(CORE)
+	$(CC) $(CFLAGS) -DSMP_DEBUG -o $@ tests/test_core.c $(CORE) -lm
 
 $(B)/measure: tests/measure.c tools/design.c tools/design.h $(CORE) src/smp_core.h | $(B)
 	$(CC) $(CFLAGS) -o $@ tests/measure.c tools/design.c $(CORE) -lm

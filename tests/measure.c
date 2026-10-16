@@ -113,7 +113,7 @@ static void measure(int method, const int16_t (*table)[SMP_TAPS], int st, double
     const double amp = 32767.0 * pow(10.0, -1.0 / 20.0);
     uint32_t ratio_q16 = (uint32_t)lround(pow(2.0, st / 12.0) * 65536.0);
     double ratio = ratio_q16 / 65536.0, fsrc = fo / ratio, w = 2.0 * M_PI * fo / FS;
-    int32_t len = (int32_t)(ratio * (n + DEC_TAPS)) + 64, k;
+    int32_t len = (int32_t)(ratio * (n + DEC_TAPS + SMP_FADE)) + 64, k;     /* the fade-out after what is used */
     int n2 = 2 * n + DEC_TAPS, m;
     int16_t *src = malloc(len * sizeof *src);
     double *y2 = calloc(n2, sizeof *y2), *y = malloc(n * sizeof *y);
