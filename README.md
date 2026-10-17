@@ -1,181 +1,69 @@
 # Cycles One-Shot
 
-A sampler machine for the Elektron Model:Cycles, OS 1.13. Its sound core plays 16-bit mono samples
-once from a start to an end frame (one shot), at any pitch from −72 to +36 semitones. It sits on the
-Cycles as a 7th machine, SAMPLE. It plays samples from the +Drive: you choose one per track in the
-PRESET browser, and it is saved with the sound. Version 0.4 shows a SAMPLE track's sample on the
-screen as a waveform, with its start and end marked.
+A one-shot sampler machine for the Elektron Model:Cycles, OS 1.13. It adds SAMPLE as a 7th machine
+next to the six stock ones and plays samples from the +Drive. You choose a sample in the OS's own
+PRESET browser, and it is saved with the sound.
 
-**Status (2026-10-17):**
+The goal is a sampler for the Cycles that is small and independent: no Model-TG, no new menus, a
+few separate parts instead of a firmware overhaul. Not a monolith: just the basics, ready to grow.
 
-- Sound core and table: done and tested on the host. Every frame is checked bit for bit against an
-  independent reference, DC passes exactly, and playback stops cleanly at the end.
-- Machine 0.1 (built-in test samples): tested in the digiemu emulator. It boots, SAMPLE plays, and
-  knobs, machine changes and several tracks work.
-- Machine 0.2 (samples from the +Drive): builds into an OS image that passes every check of the
-  build. Its bridge and sample memory pass their host tests. Tested in the digiemu emulator
-  (2026-10-14): samples open from the PRESET browser and play, PITCH works, the project keeps them
-  across saving and loading, two tracks play different samples, presets load on the other machines
-  as before, and files at 44.1 and 46.875 kHz play at their pitch (heard as a steady tone against a
-  48 kHz copy). Stereo files were not tried (digiemu's tool writes mono). Tested on a Model:Cycles
-  (2026-10-14) with samples left on its +Drive by the Model:Samples OS: it boots, SAMPLE is on the
-  MACHINES page, samples open from the browser and play, PITCH, Start and Length work, several
-  tracks play different samples, a saved project plays its samples again after switching the
-  device off and on, sounds take the sample's name, and sample locks work.
-- Machine 0.4 (the waveform view; Start and Length as on the Model:Samples; 4 ms fades): builds
-  into an OS image that passes every check of the build. The view passes its host tests: the
-  waveform columns against the sample, the markers, the name and the messages, and which screens
-  it takes over; the core's tests check every frame, fades included. Tested in the digiemu
-  emulator (2026-10-15 and 2026-10-17): the waveform view with its name in a bar like the title of
-  the OS's own browser (pixel for pixel against a digiemu screenshot) and its messages, the lines
-  following COLOR and SHAPE, the staggered grid of dots for the part a trig does not play, the
-  value window for other knobs and for locks, the stock screens on other machines, Start and Length
-  as on the Model:Samples, and the 4 ms fades at both edges of what a trig plays. Tested on a
-  Model:Cycles (2026-10-17).
-- Upload page 0.1 (`uploader/`): puts audio files on the +Drive over USB. Its protocol code and the
-  whole page pass their host tests against a stand-in Cycles. Tested with a Model:Cycles running
-  SAMPLE 0.2 (2026-10-14, Chrome on macOS): it connects, lists the +Drive, makes a folder and uploads
-  WAV files, which the Cycles' browser lists and SAMPLE plays.
-- Not SAMPLE's doing: when loading a project asks "Save … before loading?", Yes saves the project
-  you leave but does not load the other one; loading it again works. The official OS 1.13 does
-  the same, in digiemu and on a Model:Cycles.
+## Features
 
-## The machine (0.4)
-
-SAMPLE is the 7th machine on the MACHINES page, with TONE's picture. A trig plays the track's sample
-once:
+- **SAMPLE, a 7th machine.** It sits on the MACHINES page next to the stock machines and works
+  with the sequencer, locks and the amp chain like them.
+- **Samples from the +Drive.** Choose a sample in the PRESET browser on a SAMPLE track. The sound
+  takes the sample's name and keeps the choice in projects, kits and presets. Hold a step while you
+  open a sample, and the step plays it as a sample lock.
+- **Clean playback.** 6-tap polyphase interpolation at 96 kHz, as on the Model:Samples, then the
+  Cycles' own decimator. A sample recorded at another rate keeps its pitch, and stereo files play
+  as mono.
+- **Start and Length as on the Model:Samples.** Both run from 0 to 120, so moving Start keeps the
+  length and 120 splits evenly into slices.
+- **No clicks at the edges.** 4 ms fades at the end of what a trig plays, and at its start when
+  Start lies inside the sample. A sample played from its first frame keeps its attack.
+- **A waveform view.** On a SAMPLE track the main screen shows the sample's name in a bar like the
+  OS's own browser title, and the waveform across the whole width. Lines mark where a trig starts
+  and stops; they move while you turn Start and Length.
+- **An upload page.** `uploader/` puts audio files on the +Drive over USB from Chrome or Edge, as
+  samples SAMPLE plays. It needs no firmware change, so it works with the official OS as well.
 
 | Knob | SAMPLE |
 |---|---|
-| PITCH (in tenths; FUNC + PITCH in semitones), the trig's note | pitch, as on every machine. PITCH 0 at note 60 plays the sample as recorded; a sample recorded at another rate keeps its pitch |
-| COLOR (Start) | where it starts: 0 = the beginning, 120 = the end |
-| SHAPE (Length) | how much it plays, in the same 120ths of the sample: it ends at Start + Length, at most at the sample's end. 120 (the default) plays to the end. Moving Start keeps the length |
+| PITCH (in tenths; FUNC + PITCH in semitones), the trig's note | pitch, as on every machine. PITCH 0 at note 60 plays the sample as recorded |
+| COLOR | Start, 0–120 |
+| SHAPE | Length, 0–120; it ends at Start + Length, at most at the sample's end. 120 (the default) plays to the end |
 | SWEEP, CONTOUR | nothing yet |
-| DECAY, GATE, PUNCH | the stock amp chain, set up as on TONE. DECAY starts at 127 so a sample plays out. GATE holds the level while the note lasts, then DECAY lets it fall; at DECAY 127 that fall takes about 15 s, so GATE is only heard with a lower DECAY |
+| DECAY, GATE, PUNCH | the stock amp chain, set up as on TONE. DECAY starts at 127, so a sample plays out; GATE is heard with a lower DECAY |
 
-Start and Length work as on the Model:Samples (its OS computes the same at `0x400a62dc`), 0 to 120
-each, so 120 splits evenly into slices: Length 15 and Start 0, 15, 30 … play 8 equal parts, Length
-10 and Start 0, 10, 20 … play 12. Sounds saved with version 0.2 counted both in 128ths of the
-sample, Length of the rest after Start; they keep their values, which now count as above, and
-values past 120 count as 120. Length 127, 0.2's default, still plays to the end. Both edges of
-what a trig plays fade over 4 ms against clicks, the start only when it lies past the sample's
-first frame (see [Fades](#how-it-plays)).
+## Status
 
-**Choosing a sample.** Set a track to SAMPLE, open the PRESET browser and open a sample file on the
-+Drive. The track's sound keeps its settings and now names that file. As for presets, the browser
-gives the sound the file's name (up to 15 characters, without an extension) and shows
-"Loaded <name>". Sample files are the ones the Model:Samples and Elektron Transfer write: a 64-byte
-header, then 16-bit big-endian PCM. A stereo file plays as mono (left and right mixed). On any other
-machine, and for presets, the browser works as before.
+- **Machine 0.4** (waveform view, Start and Length as on the Model:Samples, fades): tested on a
+  Model:Cycles (2026-10-17), and in the digiemu emulator.
+- **Upload page 0.1:** tested with a Model:Cycles (Chrome on macOS).
+- **Limits:** SAMPLE cannot be combined with Model-TG or with Modded-Cycles' track filter, which
+  hook the same functions of the OS.
+- **Not One-Shot's doing:** when loading a project asks "Save … before loading?", Yes saves the
+  project you leave but does not load the other one. The official OS 1.13 does the same.
 
-**The screen.** While a SAMPLE track is selected, the main screen shows the sample as a waveform
-across the whole width, scaled to the sample's own peak. A lit bar with rounded corners along the
-top holds the sound's name in dark letters; the browser set it to the sample's name. A solid line marks where a trig starts (COLOR), a dotted line
-where it stops (SHAPE); the part in between is drawn in full, the rest as a staggered grid of dots
-(every other pixel of every other row, one pixel further on from row to row).
-Turning COLOR or SHAPE moves the lines while you turn, in place of the usual value window. Any
-other knob shows its value as before, and so do Start and Length while you hold a trig to lock
-them: the value window then shows the locked value. Tracks on other machines keep the stock
-screens. Until a sample is chosen the bar stays empty and the screen says NO SAMPLE; while it loads
-it says LOADING, and NOT FOUND if the file is not on the +Drive.
+## Getting started
 
-**Sample locks.** In the browser, select a sample, then hold a step of the SAMPLE track and open
-the sample. As for presets, the browser puts the sound into the sound pool (the LOCKS folder, where
-it shows the sample's name) and locks the step to it. That step then plays this sample, the other
-steps the track's own.
+1. **Build the image** from your own copy of the official `model-cycles_OS1.13.syx`. You need
+   Python 3, the m68k-elf toolchain (Homebrew: `m68k-elf-gcc`, `m68k-elf-binutils`) and a clone
+   of [Modded-Cycles](https://github.com/18nelli18/Modded-Cycles), whose machine-adding tools the
+   build uses:
 
-**Where the choice is kept.** In the sound itself, in three parameter words the OS leaves unused (k
-25..27): the file's inode and its id. The id is the hash of the file's content that the file system
-keeps in the inode, so it names the file even if it moves. The sound records in projects, kits and
-presets keep the three words in record slots 24..26, which the OS writes as zero and never reads.
-So the choice survives saving, loading and copying a sound, also into the sound pool for sound
-locks.
+   ```sh
+   python3 machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
+   ```
 
-**Loading.** From the screen's redraw, about 30 times a second, the machine looks at every sound
-that could play: the kits of the 96 patterns, the kit the audio side is playing and the tracks' live
-sounds. It loads every sample a SAMPLE sound names into free memory, 63 MB from `0x42800000`, and
-frees what no sound names any more once no voice plays it. It reads 128 KB a tick through the file
-system's own read, so a fragmented file reads correctly. If a file is no longer at its inode, the
-file system's own index of ids says where it is now. A trig whose sample is not (yet) loaded stays
-silent. The tick leaves the drive alone while the file system is busy in the same task or not
-mounted.
-
-**How it is built in.** Modded-Cycles adds its MACRO machine with a generator (`tools/gen_macro.py`,
-MIT). `machine/build.py` uses the same machinery, imported from your clone of Modded-Cycles, which
-it leaves unchanged:
-
-- The tables of machines, parameter descriptors, names and `update`/`render` move into a payload at
-  `0x46700000`, the place Modded-Cycles uses next to Model-TG. The samples get the 63 MB below it.
-- A boot hook in a freed sprite mask copies the payload there at start-up.
-- The `moveq` bounds go up by one machine.
-- Detours teach the MACHINES page, the encoder and the sound records the new machine.
-
-Seven more writes lead into SAMPLE's own code:
-
-| Where | What it was | What SAMPLE adds |
-|---|---|---|
-| `0x400a6602` | the browser reads the opened file as a preset | on a SAMPLE track, a sample file instead names the sample in the track's sound (`machine/hooks.S`, `smp_browser_open`) |
-| `0x4005afa0`, `0x4005b054` | a sound becomes a record (versions 2 and 1) | the three words go into the record |
-| `0x4005aecc` | a record becomes a sound | the three words come back |
-| `0x400075f0` | the screen's redraw asks whether to draw | the loading tick runs first (`machine/pool.c`) |
-| `0x400ffe30`, `0x4010053c` | the draw methods of the main screen and of the knob view, in their vtables | SAMPLE's view (`machine/view.c`), which calls the stock method for anything it does not draw itself |
-
-The audio side is `machine/sampler.c`. At a trig it reads the sample's id from the parameters the
-audio side has copied for the note, finds the loaded sample and starts it. It renders 64 frames at
-96 kHz through the core, then calls the stock decimator and the amp chain like TONE. It leaves out
-two optional writes that MACRO carries: `voice_loop` (a shorter halving loop with the
-same values) and `usb_steady` (an even USB audio clock). It cannot be combined with Model-TG or with
-Modded-Cycles' track filter, which hook the same sound record functions.
-
-**Build:**
-
-```sh
-python3 machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles \
-    --tool path/to/elektron-firmware-tool
-```
-
-This writes `build/model-cycles_OS1.13-sampler-v0.4.syx`, plus a `.json` report and the tweak in
-Modded-Cycles' format (`build/sampler-tweak.json`). Every write is checked against the stock bytes,
-and writes into free space that the OS still points at are refused. The result is read back
-(checksums, HMAC, MAIN OS); with `--tool`, elektron-firmware-tool checks it again. Built against
-Modded-Cycles commit `6a9742a`. `make machine-test` runs the host tests of the bridge, the sample
-memory and the view, with stand-ins for the OS; with `VIEW_PREVIEW` set to a folder, it also writes
-the views it draws there as PBM pictures, and with `VIEW_OS` set to the unpacked MAIN OS 1.13 as
-well, their text uses the OS's own fonts.
-
-**Trying it in digiemu.** digiemu's LOAD SAMPLES button is on the Model:Samples only. For the
-Cycles, put WAV files on the emulated +Drive with digiemu's own tool, while digiemu is closed, after
-the first start of this firmware has formatted its card:
-
-```sh
-python3 tools/ekfsadd.py path/to/firmware-folder/plusdrive.img kick.wav snare.wav
-```
-
-They land in `/incoming`, converted to mono; the rate is kept. The launcher then offers a rebuild.
-
-**What to try first:** a sample on a SAMPLE track from the browser; its waveform, and the lines
-moving with Start and Length; trigs and pitch;
-a 44.1 kHz file at note 60 (same pitch as recorded); saving and loading the project; another track
-or pattern with another sample; a pool sound with a sample as a sound lock; presets on other
-machines, as before.
-
-## Getting samples onto the +Drive
-
-Elektron Transfer lists the samples on a Model:Cycles but will not add any: it treats the Cycles as
-a device without samples. The Cycles itself writes files fine, with the same file commands Transfer
-uses for presets. The upload page uses them:
-
-1. Connect the Cycles by USB and close Transfer, which would hold the MIDI port.
-2. Open `uploader/index.html` in Chrome or Edge, press **Connect** and allow MIDI with SysEx.
-3. Pick a folder on the +Drive, or make one with **New folder**.
-4. Add audio files (anything the browser can read: WAV, AIFF, MP3, FLAC…), rename them if you like,
-   and press **Upload to this folder**.
-
-Each file becomes a 48 kHz mono 16-bit sample in the format the Model:Samples and Transfer write (a
-64-byte header, big-endian frames, 16 zero bytes), so the Cycles' browser lists it and SAMPLE plays
-it. The page checks the size the Cycles reports afterwards. The Cycles stays silent while it writes,
-as with every file it writes. The page needs no firmware change, so it works with the official OS
-as well.
+   This writes `build/model-cycles_OS1.13-sampler-v0.4.syx` and checks every change against the
+   stock bytes.
+2. **Install it** over USB the way you install an official OS update. To go back, install the
+   official 1.13 file the same way.
+3. **Put samples on the +Drive.** Samples already there, for example from the Model:Samples OS,
+   work as they are. For new ones open `uploader/index.html` in Chrome or Edge, press **Connect**,
+   pick a folder and upload. Close Elektron Transfer first, which would hold the MIDI port.
+4. **Play.** Set a track to SAMPLE, open the PRESET browser (FUNC + MACHINE) and open a sample.
 
 If Chrome refuses MIDI to a page opened from disk, serve the folder locally and open
 http://localhost:8000:
@@ -184,163 +72,16 @@ http://localhost:8000:
 python3 -m http.server --directory uploader 8000
 ```
 
-The page is our own code (MIT). The protocol facts come from
-[ModdedTransfer](https://github.com/ktwzk/modded-transfer) (WTFPL), which uploads through Model-TG's
-SMP identity, and from Model-TG's table of the Cycles' own file commands (MIT): the Cycles answers
-0x14, 0x15 and 0x43–0x45 where a Model:Samples answers 0x10, 0x11 and 0x40–0x42.
-`make uploader-test` runs its tests (node).
+## Documentation
 
-## How it plays
-
-The Model:Samples OS 1.13 plays a sample in two stages, and this core uses the same two:
-
-1. **Interpolation at twice the rate.** For each block of 32 frames at 48 kHz the core computes 64
-   frames at 96 kHz. Each frame comes from 6 neighbouring sample frames, weighted by one of 256 rows
-   of a table; the top 8 bits of the playhead's fraction pick the row (`src/smp_core.c`).
-2. **2:1 decimation.** The Cycles' own decimator in the stock voice chain (`0x400a9f58` in OS 1.13)
-   brings the 64 frames down to 32. It is an IIR half-band filter: the even frames are delayed, the
-   odd ones go through a 4th-order allpass, and the two are added. It is flat to 20 kHz (−0.01 dB)
-   and attenuates by about 52 dB from 30 kHz up. The Model:Samples uses the same code with the
-   same coefficients.
-
-The playhead is 32.32 fixed point. Before each block the core copies the frames it will read into a
-scratch buffer and puts silence wherever they fall outside the start–end window, so the inner loop
-needs no bounds checks. The voice switches off once every tap has passed the end. A full-scale
-sample frame comes out as `32767 << 15`, half of Q31, the level Cycles machines hand to the
-decimator.
-
-**Fades.** Neither edge of the window clicks. When Start lies past the sample's first frame, the
-sound fades in over 4 ms; every window fades out over the 4 ms before the playhead reaches its end.
-Both fades follow the S curve 3x² − 2x³ and count frames at 96 kHz (384), so they last 4 ms at any
-pitch. A window that starts at the sample's first frame keeps its attack as recorded, so drum hits
-lose nothing. The values follow common practice: Ableton Live fades clip edges by up to 4 ms, FL
-Studio's sampler fades out over 10 ms by default and keeps drum attacks in its transient mode.
-Outside the fades every frame is the plain filter result. A new trig on a sounding track still cuts
-the old sound the way every Cycles machine does: the stock amp chain ramps it to silence within
-the 0.67 ms block of the trig.
-
-**Cost:** with gcc 16 at `-O2` the inner loop takes 31 instructions per frame, about 2,200 per
-track and block. The decimator adds about 520. For comparison, a TONE voice takes 5,291
-(measured by Modded-Cycles). An EMAC loop like the one in the Model:Samples (16 instructions per
-frame) would halve the core's share. That is planned for the integration step.
-
-## The table
-
-The table is one least-squares prototype filter of 1,536 taps (`tools/design.c`), cut into 256 rows
-of 6 taps. Each row is centred on the playhead and sums to exactly 32768. The Makefile holds the
-design in use:
-
-```
-DESIGN := proto 0.34 0.55 100 0   # passband to 16.3 kHz, stopband from 26.4 kHz, weight 100
-```
-
-### How clean it plays
-
-`tests/measure.c` plays a sine at −1 dBFS at each pitch and tone. It reports the SINAD in dB: the
-tone against everything else up to about 21 kHz. Higher is cleaner. The columns compare four ways
-of playing:
-
-- **Model-TG:** takes the frame under the playhead and holds it for two frames.
-- **Linear:** interpolates linearly between two frames.
-- **Model:Samples 1.13:** its own table, read from your copy of the OS (see below).
-- **This core.**
-
-| pitch, tone out | Model-TG | linear | Model:Samples 1.13 | this core |
-|---|---:|---:|---:|---:|
-| −24 st, 1 kHz | 18.3 | 39.4 | 62.8 | 56.4 |
-| −24 st, 5 kHz | 1.6 | 5.5 | 19.8 | 54.3 |
-| −12 st, 5 kHz | 11.1 | 22.1 | 56.7 | 55.0 |
-| −12 st, 10 kHz | 2.8 | 5.5 | 20.1 | 69.1 |
-| −5 st, 1 kHz | 27.5 | 77.6 | 66.4 | 75.1 |
-| −5 st, 10 kHz | 8.7 | 34.6 | 51.6 | 55.2 |
-| +5 st, 1 kHz | 32.1 | 87.7 | 71.5 | 80.7 |
-| +5 st, 10 kHz | 12.4 | 47.8 | 58.3 | 60.7 |
-| +5 st, 15 kHz | 6.4 | 27.7 | 53.8 | 53.4 |
-
-Octaves (0, ±12, +24 st) land on whole or half frames, so they play cleanly at low tones with any
-method; `make measure` prints the full grid. Over that grid the core's worst cell is 53.4 dB and
-its mean 84.1 dB. The Model:Samples table reaches 19.8 dB and 79.5 dB. Above 5 kHz both are near
-the limit that 256 rows set.
-
-### How it sounds
-
-The Model:Samples table is not flat. It rises to +1.9 dB around 10 kHz. A least-squares design that
-damps the images of the source spectrum strongly takes on almost the same bump by itself, so the
-bump looks like a by-product of that trade, not an EQ choice. This core keeps the bump up to 8 kHz.
-Above that it is somewhat darker, and in exchange it damps the images more:
-
-| kHz | 2 | 5 | 8 | 10 | 12 | 15 | 17 | 20 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Model:Samples 1.13, dB | +0.19 | +0.98 | +1.72 | +1.87 | +1.60 | +0.24 | −1.38 | −5.04 |
-| this core, dB | +0.20 | +0.96 | +1.58 | +1.56 | +1.02 | −0.93 | −3.15 | −8.15 |
-
-| image of the source spectrum at kHz | 26 | 28 | 30 | 34 | 40 | 44 |
-|---|---:|---:|---:|---:|---:|---:|
-| Model:Samples 1.13, dB | −18.0 | −24.8 | −33.6 | −76.1 | −68.2 | −73.1 |
-| this core, dB | −29.5 | −101.2 | −41.4 | −81.7 | −58.0 | −64.6 |
-
-`make sweep` rates other designs. `proto 0.36 0.55 100 0` is brighter and closer to the Model:Samples
-above 10 kHz, but less clean when the pitch goes an octave or more down.
-
-## Build and test
-
-You need a C compiler and, for the target check, the m68k-elf toolchain (Homebrew:
-`m68k-elf-gcc`, `m68k-elf-binutils`).
-
-```sh
-make test          # unit tests of the core on the host
-make target        # compile for the ColdFire: size, and undefined symbols (must be none)
-make measure       # the SINAD and gain grid for Model-TG's way, linear and the core
-make coeffs        # regenerate src/smp_coeffs.c from DESIGN in the Makefile
-make check-coeffs  # check that src/smp_coeffs.c matches DESIGN
-```
-
-To compare with the Model:Samples, take its table from your own copy of the official
-`model-samples_OS1.13.syx`. You also need
-[elektron-firmware-tool](https://github.com/mischa85/elektron-firmware-tool):
-
-```sh
-python3 tools/samples_table.py --stock model-samples_OS1.13.syx --tool path/to/elektron-firmware-tool
-make measure SAMPLES=build/samples_table.bin
-make sweep SAMPLES=build/samples_table.bin
-```
-
-The script checks the SHA-256 of the file and of its MAIN OS, and the bytes of the code that
-reads the table. It writes `build/samples_table.bin` and the four decimator coefficients in
-`build/samples_decimator.bin`. Both stay out of the repository.
-
-### Listening tests
-
-`make render` builds `build/render`. It brings a WAV file to 48 kHz/16 bit, the way the device
-would hold it. Then it plays the file at a pitch: through the core, through another table, or
-the way Model-TG plays (`--zoh`). Last comes a model of the Cycles' decimator. All methods come out
-equally loud.
-
-```sh
-build/render --decimator build/samples_decimator.bin --semitones -12 in.wav core.wav
-build/render --decimator build/samples_decimator.bin --table build/samples_table.bin --semitones -12 in.wav samples.wav
-build/render --decimator build/samples_decimator.bin --zoh --semitones -12 in.wav model-tg.wav
-```
-
-## What the Model:Samples OS 1.13 does
-
-These are notes from reading the MAIN OS, for the integration step:
-
-- The audio block (`0x400586ae`) runs a fixed chain for 7 voices: one for preview and the 6 tracks.
-  Each voice keeps 92 bytes of state from `0x8000cbe4`. Unlike the Cycles, the Samples has no
-  machine framework.
-- Sample data streams by eDMA from the 64 MB pool into SRAM buffers, about 140 frames per voice
-  and block. The next voice loads while the current one computes.
-- Interpolation at `0x400a7082`: 6 taps, 256 rows, `macw`, 16 instructions per frame. The table
-  sits in SRAM at `0x8000a000`, in three banks of 1 KB that each hold two taps per row. The reset
-  code copies it there from the image at `0x401A44F0`.
-- Decimation at `0x400a714e` uses the same code and coefficients as the Cycles at `0x400a9f58`.
-- Each track then gets an envelope (`0x400a5b28`) and a 2-pole filter: lowpass for knob values up
-  to 16383, highpass above (`0x400a5f5a`, `0x400a5c1c`).
-- The sample table holds 2,500 slots of 16 bytes from `0x404a2ad0`: data pointer, rate (48000 by
-  default), length, and the rate ratio.
+[TECHNICAL.md](TECHNICAL.md) explains how it works: how the parts of the OS that One-Shot touches
+work, where and how it hooks in, the sound core and its measurements, the USB file commands, notes
+on the Model:Samples OS, and how to build, test and try it in an emulator.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The repository holds no Elektron firmware. The Model:Samples table is
-read from your own copy of the OS file, used only for comparison, and stays in `build/`.
+MIT, see [LICENSE](LICENSE). The repository holds no Elektron firmware: the build starts from your
+own copy of the official file, and the Model:Samples table used for comparison is read from your
+own copy of that OS and stays in `build/`. The protocol facts of the upload page come from
+[ModdedTransfer](https://github.com/ktwzk/modded-transfer) (WTFPL) and Model-TG (MIT); the
+machine-adding tools are Modded-Cycles' (MIT).
