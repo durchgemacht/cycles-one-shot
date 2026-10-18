@@ -4,8 +4,8 @@ A one-shot sampler machine for the Elektron Model:Cycles, OS 1.13. It adds SAMPL
 next to the six stock ones and plays samples from the +Drive. You choose a sample in the OS's own
 PRESET browser, and it is saved with the sound.
 
-The goal is a sampler for the Cycles that is small and independent: no Model-TG, no new menus, a
-few separate parts instead of a firmware overhaul. Not a monolith: just the basics, ready to grow.
+The goal is a sampler for the Cycles that is small and stands on its own: no new menus, a few
+separate parts instead of a firmware overhaul. Not a monolith: just the basics, ready to grow.
 
 ## Features
 
