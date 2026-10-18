@@ -31,6 +31,12 @@ from the Model:Samples: looping and reverse playback.
   and how the resonance thins out towards the top follow the Model:Samples, measured on its OS
   and rebuilt from scratch: a 2-pole filter on the ColdFire's EMAC, about 800 instructions per
   track and block. At 0 (the default, the knob's middle) the track is untouched, bit for bit.
+  One difference: the filter runs inside the machine, after the amp envelope and before
+  Volume + Dist, where the Model:Samples has it after. Volume + Dist is a stage of the OS's
+  track chain that runs after every machine, so putting the filter behind it would mean changing
+  that chain for all tracks. You hear the difference only with DIST above 0: the distortion
+  then acts on the filtered signal. The laws, the structure and the measurements are in
+  [TECHNICAL.md, section 16](TECHNICAL.md#16-the-filter).
 - **A waveform view.** On a SAMPLE track the main screen shows the sample's name in a bar like the
   OS's own browser title, and the waveform across the whole width. Lines mark where a trig starts
   and stops; they move while you turn Start and Length.
@@ -88,8 +94,9 @@ python3 -m http.server --directory uploader 8000
 ## Documentation
 
 [TECHNICAL.md](TECHNICAL.md) explains how it works: how the parts of the OS that One-Shot touches
-work, where and how it hooks in, the sound core and its measurements, the USB file commands, notes
-on the Model:Samples OS, and how to build, test and try it in an emulator.
+work, where and how it hooks in, the sound core and its measurements, the filter with its laws
+and how close it comes to the Model:Samples', the USB file commands, notes on the Model:Samples
+OS, and how to build, test and try it in an emulator.
 
 ## License
 

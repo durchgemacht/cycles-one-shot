@@ -664,6 +664,10 @@ the parameter itself stays 0 … 127 with 64 in the middle for the LFO, locks, N
 **Differences from the Model:Samples, on purpose.** The highpass passes at unity, not 12 dB down.
 On the highpass side the Model:Samples' idle lowpass stage (−0.8 dB at 10 kHz, −1.9 dB at
 20 kHz) is not reproduced. A loud resonance saturates instead of wrapping. The log-table quirk
-at cutoff 60 / resonance 32 is not reproduced. And the filter sits before Volume + Dist, inside
-the machine, where the Model:Samples has it after: with DIST above 0 the distortion acts on the
-filtered signal rather than the filter on the distorted one.
+at cutoff 60 / resonance 32 is not reproduced. And the filter sits inside the machine, after
+the amp envelope and before Volume + Dist, where the Model:Samples has it after: with DIST above
+0 the distortion acts on the filtered signal rather than the filter on the distorted one. The
+reason is the Cycles' chain (section 5): a machine renders its block, then the OS's own stages
+run for every track, velocity, Volume + Dist and the mixer. A filter behind Volume + Dist would
+have to hook that chain for all tracks, the way Modded-Cycles' track filter does at
+`0x40059852`; SAMPLE's filter belongs to the machine instead and leaves the chain alone.
