@@ -106,6 +106,16 @@ static inline int32_t selected_track(void)
 #define FONT_SMALL          ((const void *)0x40140ab0)      /* 5 x 9 pixels */
 #define FONT_MEDIUM         ((const void *)0x4014120c)      /* 7 x 9 pixels */
 #define DRAW_TEXT           ((void (*)(void *, void *, int32_t, int32_t, int32_t, const char *, ...))0x40071a04)
+/* The OS's objects of the 76 stock parameters, 100 bytes each from 0x40a71754, built at boot
+   (0x400def5c); the accessor 0x4004df40(index) is detoured by the build so that SAMPLE's
+   descriptors share SNARE's objects (Modded-Cycles' notes/18). An object's +0x20 is the function
+   that writes a value as text: formatter(object + 0x14, value, buffer), called by 0x4000a70e for
+   the value window, the TRACK + knob popup and locks. The stock one for 0..127 is 0x400456c8
+   (sprintf "%d" of the value >> 8); others show -64..+63 (0x400456ea) or OFF (0x40045bd6). */
+typedef int32_t (*smp_formatter)(void *, int32_t, char *);
+#define UI_OBJECT(i)        ((char *)0x40a71754 + 100 * (i))
+#define UI_FORMATTER(i)     (*(smp_formatter volatile *)(UI_OBJECT(i) + 0x20))
+#define FMT_INT             ((smp_formatter)0x400456c8)
 
 #endif
 #endif

@@ -3,8 +3,10 @@
    A trig plays the sample its sound names once (one shot) through the core in src/smp_core.c and
    hands the result to the Cycles' own chain: its 2:1 decimator (0x400a9f58), then the amp
    envelope, VCA and PUNCH, set up the way TONE (0x400aa7b8) and Modded-Cycles' MACRO set them.
-   Which sample: the note's sound names it in its parameters k 26/27, read from the copy the audio
-   side keeps before any smoothing (TARGETS); pool.c has loaded it, or the note stays silent.
+   Last comes SAMPLE's own filter (src/smp_filter.c), as on the Model:Samples, where the filter is
+   the last stage of a track. Which sample: the note's sound names it in its parameters k 26/27,
+   read from the copy the audio side keeps before any smoothing (TARGETS); pool.c has loaded it,
+   or the note stays silent.
 
    Contract of the voice loop (Modded-Cycles notes/14 and notes/43): sampler_update(pmod, v, p),
    then sampler_render(out, v), once per block of 32 frames at 48 kHz. pmod is the trig's note in
@@ -17,10 +19,12 @@
    Knobs: PITCH, FINE and the trig's note set the pitch as on every machine; note 60 at PITCH 64
    and FINE 64 plays the sample as recorded (a sample at another rate keeps its pitch). COLOR =
    start, SHAPE = length, both 0 to 120 as on the Model:Samples (SMP_SPAN in pool.h): moving the
-   start keeps the length. SWEEP and CONTOUR do nothing yet. DECAY, GATE and PUNCH are the stock amp
-   chain. */
+   start keeps the length. SWEEP = cutoff (64 = open, below a lowpass, above a highpass) and
+   CONTOUR = resonance, as the Model:Samples' CUTOFF and RESONANCE. DECAY, GATE and PUNCH are the
+   stock amp chain. The filter keeps running on silence while its resonance rings out. */
 #include <stdint.h>
 #include "smp_core.h"
+#include "smp_filter.h"
 #include "os.h"
 #include "pool.h"
 
@@ -34,6 +38,7 @@
 #define P16(o)      (*(const int16_t *)(p + (o)))
 
 static smp_voice voices[6];
+static smp_filter filters[6];
 static uint32_t rates[6];                       /* each voice's sample rate / 48 kHz, Q16.16 */
 static int16_t scratch[SMP_SCRATCH];
 /* The decimator reads 8 frames of history and then the block at 96 kHz; it fills the history in
@@ -137,6 +142,7 @@ void sampler_update(int32_t pmod, char *v, const char *p)
 
     if (V32(MARK_OFF) != MARK) {                /* first block since the track changed machine */
         sv->active = 0;
+        smp_filter_reset(&filters[t]);
         V32(MARK_OFF) = MARK;
     }
     /* the stock amp chain, set up like TONE and MACRO */
@@ -166,11 +172,15 @@ void sampler_update(int32_t pmod, char *v, const char *p)
     n = ((int32_t)P16(0x14) << 8) + (((int32_t)P16(0x22) - 0x4000) << 3) - (64 << 16) + pmod;
     n = n < 0 ? 0 : n > 127 << 16 ? 127 << 16 : n;
     smp_set_ratio(sv, mul_q16(ratio_of(n - ROOT), rates[t] ? rates[t] : 1u << 16));
+    /* the filter follows SWEEP and CONTOUR, smoothed by the OS like every knob */
+    smp_filter_set(&filters[t], P16(0x1a), P16(0x1c));
 }
 
 void sampler_render(int32_t *out, char *v)
 {
-    smp_voice *sv = &voices[track_of(v)];
+    int t = track_of(v);
+    smp_voice *sv = &voices[t];
+    smp_filter *fl = &filters[t];
     int i;
 
     /* nothing to play: no trig, and the sample has ended or the amp envelope is closed */
@@ -178,6 +188,8 @@ void sampler_render(int32_t *out, char *v)
         && (!sv->active || (mag(V32(0x230)) < IDLE_LEVEL && mag(V32(0x234)) < IDLE_LEVEL))) {
         for (i = 0; i < SMP_BLOCK; i++)
             out[i] = 0;
+        if (smp_filter_ringing(fl))             /* the resonance dies away on silence */
+            smp_filter_run(fl, out);
         return;
     }
     smp_render(sv, buf + 8, scratch);
@@ -185,4 +197,5 @@ void sampler_render(int32_t *out, char *v)
     AMP_ENV(v);
     VCA(out, v);
     PUNCH(out, v);
+    smp_filter_run(fl, out);
 }

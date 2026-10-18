@@ -67,6 +67,12 @@ void host_draw_text(void *bmp, void *font, int32_t x, int32_t y, int32_t flags, 
 #define FONT_MAKE(f, g)     ((void)(f), host_font = (g))
 #define FONT_DROP(f)        ((void)(f))
 extern const char host_font_small[], host_font_medium[];
+typedef int32_t (*smp_formatter)(void *, int32_t, char *);
+extern char host_ui_objects[];
+int32_t host_fmt_int(void *self, int32_t value, char *buf);
+#define UI_OBJECT(i)        (host_ui_objects + 100 * (i))
+#define UI_FORMATTER(i)     (*(smp_formatter *)(UI_OBJECT(i) + 0x20))
+#define FMT_INT             host_fmt_int
 #define FONT_SMALL          ((const void *)host_font_small)
 #define FONT_MEDIUM         ((const void *)host_font_medium)
 #define DRAW_TEXT           host_draw_text

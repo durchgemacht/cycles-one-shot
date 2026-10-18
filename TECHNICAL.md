@@ -175,9 +175,11 @@ of a sample (section 10).
 reads the sample's id from the note's parameter copy, finds the loaded sample (or stays silent if
 it is not loaded) and starts the core on the frames Start and Length select. Every block it turns
 the note into a ratio, linear within a semitone, and multiplies it by the sample's rate against
-48 kHz, so a sample keeps its pitch at any rate. `render` runs the core (64 frames at 96 kHz), the
-stock decimator and the amp chain. It skips all of that while no trig is pending and the sample
-has ended or the envelope is below −102 dB.
+48 kHz, so a sample keeps its pitch at any rate, and hands SWEEP and CONTOUR to the filter.
+`render` runs the core (64 frames at 96 kHz), the stock decimator, the amp chain and then the
+filter (section 16), the last stage of a track as on the Model:Samples. It skips all of that while
+no trig is pending and the sample has ended or the envelope is below −102 dB; a filter whose
+resonance still rings then runs on silence until it has died away.
 
 ## 6. Sounds, kits and records
 
@@ -190,7 +192,7 @@ at `+212 + t · 68`, and entry +40 of that owner's vtable returns the sound (the
 | Offset | Content |
 |---|---|
 | `+4` | name, 16 bytes |
-| `+20 + 2k` | parameter k, 8.8 (k 11 COLOR at `+42`, k 12 SHAPE at `+44`) |
+| `+20 + 2k` | parameter k, 8.8 (k 6 SWEEP at `+32`, k 7 CONTOUR at `+34`, k 11 COLOR at `+42`, k 12 SHAPE at `+44`) |
 | `+38` | the machine (high byte of k 9) |
 | `+70` | k 25–27: unused by the OS; SAMPLE keeps its key here (below) |
 
@@ -202,12 +204,17 @@ message at `0x40058ddc`); a sound that only that copy holds still has to load.
 **Records.** Projects, kits and presets store sounds as records. "Sound to record" exists in two
 versions (`0x4005afa0`, `0x4005b054`, arguments record and sound), "record to sound" once
 (`0x4005aecc`, arguments sound and record). The load clears k 0–32 of the sound (`0x4005af12`)
-and takes record version 2 only. Record slots 24–26 (`+76`) are written as zero and never read.
+and takes record version 2 only. Record slots 24–27 (`+76`) are written as zero and never read.
 
 **SAMPLE's key.** A SAMPLE sound names its sample by three words in k 25–27: the file's inode and
 its id. The id is the content hash the file system keeps in the inode (section 7), so it names the
 file even after the file moves. The record hooks copy the three words to and from record slots
 24–26, so the choice survives saving, loading, copying a sound and putting it into the pool.
+
+**The filter's mark.** Since 0.5 SWEEP is the filter's cutoff, and 0 is a closed lowpass. Sounds
+saved by 0.4 and earlier (or by the official OS) have SWEEP at 0, the old "Unused" knob's
+default. So the save hook writes 1 into record slot 27 (`+82`), and the load hook sets SWEEP to
+64 (open) when a SAMPLE record has no mark. P-locks hold live values and need no such care.
 
 ## 7. The +Drive file system
 
@@ -285,6 +292,18 @@ the main screen itself, and the knob view's screen while Start or Length is turn
 trig; everything else goes to the stock method. It reads the sound's live COLOR and SHAPE, so the
 markers move while the knob turns. The waveform comes from 128 columns of minimum and maximum that
 `pool.c` gathers while the file loads.
+
+### Parameter objects and a value's text
+
+The OS keeps an object of 100 bytes for each of its 76 parameters at `0x40a71754 + 100 · i`,
+built one by one at boot (`0x400def5c`). The accessor `0x4004df40(i)` returns one; the build's
+detour (Modded-Cycles' notes/18) makes SAMPLE's descriptors 76–80 return SNARE's objects 51–55.
+A value's text comes from the function at the object's `+0x20`, called as `formatter(object +
+0x14, value, buffer)` by `0x4000a70e`; the value is the 8.8 word, the buffer holds 12 bytes at
+least, and the screen shows three characters at most. The stock formatters: `0x400456c8` writes
+0 … 127 (`sprintf "%d"` of the value >> 8), `0x400456ea` −64 … +63 with a plus sign,
+`0x40045bd6` OFF in the middle and ±n. One-Shot puts its own into the shared object of Cutoff
+(section 16).
 
 ### Bitmaps and drawing
 
@@ -462,9 +481,21 @@ From reading its MAIN OS; addresses here are the Model:Samples'.
 
 - **No machine framework.** The audio block (`0x400586ae`) runs a fixed chain for 7 voices, one for
   preview and the six tracks: voice setup (`0x400a6612`), render (`0x400a6abc`), "Volume + Dist"
-  with pan (`0x40055e9c`), a small envelope per track (`0x400a5b28`), a 2-pole filter per track
-  (`0x400a629a`: lowpass for knob values up to 16383, `0x400a5f5a`; highpass above, `0x400a5c1c`),
-  the mixer. Each voice keeps 92 bytes of state from `0x8000cbe4`.
+  with pan (`0x40055e9c`), a small envelope per track (`0x400a5b28`), the filter per track
+  (`0x400a629a`, below), the mixer. Each voice keeps 92 bytes of state from `0x8000cbe4`.
+- **The filter** (`0x400a629a(params, buffer, trig bit, track)`, MACSR 0xa0): a highpass stage
+  (`0x400a5c1c`, state slot t) and then a lowpass stage (`0x400a5f5a`, slot t + 6), both always.
+  One knob: a cutoff word up to 16383 drives the lowpass (the highpass sits at 5 Hz); above, the
+  highpass with the word minus 16384 (the lowpass sits at its top, −0.8 dB at 10 kHz, −1.9 dB at
+  20 kHz). Each stage is a 2-pole with two states and six coefficients, computed per block from
+  tables and glided linearly within the block. The lowpass output is twice a state, shifted
+  without saturation (so a loud resonance wraps); the highpass output is a quarter of the input
+  minus half that state, so its passband is 12 dB down (made up elsewhere). The descriptors:
+  Filter Cutoff k 60, default 0x4000, CC 74, group "Filter"; Filter Reso k 61, default 0, CC 71.
+  Its laws, measured by emulating the coefficient path with the OS's own tables, are in
+  section 16. One quirk: at cutoff 60 with resonance 32 (words 15360 and 8192; 31744 on the
+  highpass side) the index into its 1024-entry log table reaches 2048, so it reads the next
+  table and the filter degenerates at exactly that setting.
 - **Streaming.** Sample data streams by eDMA from the 64 MB pool into SRAM buffers, about 140
   frames per voice and block; the next voice loads while the current one computes. A trig in one
   block's mask starts the voice in the next, as on the Cycles.
@@ -487,7 +518,7 @@ From reading its MAIN OS; addresses here are the Model:Samples'.
 
 **Build.** `machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
 [--tool path/to/elektron-firmware-tool]` starts from your copy of the official file (checked by
-its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.4.syx`, a `.json` report and the
+its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.5.syx`, a `.json` report and the
 tweak in Modded-Cycles' format (`build/sampler-tweak.json`). Every write is checked against the
 stock bytes; the result is read back (checksums, HMAC, MAIN OS), and with `--tool`
 elektron-firmware-tool checks it again. Built against Modded-Cycles commit `6a9742a`.
@@ -497,12 +528,15 @@ elektron-firmware-tool checks it again. Built against Modded-Cycles commit `6a97
 
 ```sh
 make test            # the core: every frame against a 64-bit reference, fades included
-make machine-test    # bridge, sample memory and view, with stand-ins for the OS
+make filter-test     # the filter: its table, response against its laws, starts, glide, saturation
+make machine-test    # bridge, sample memory, view and the filter's place, with stand-ins for the OS
 make uploader-test   # the upload page's protocol code and page, against a stand-in Cycles
 make target          # compile the core for the ColdFire: size, undefined symbols (must be none)
 make measure         # the SINAD and gain grid
 make coeffs          # regenerate src/smp_coeffs.c from DESIGN
 make check-coeffs    # check src/smp_coeffs.c against DESIGN
+make filter-table    # regenerate src/smp_filter_tab.c (tools/gen_filter_table.py); check-filter-table compares
+make filter-probe    # build/filter_probe <cutoff> <reso>: the filter's response, for comparisons
 ```
 
 With `VIEW_PREVIEW` set to a folder, `make machine-test` also writes the views it draws there as
@@ -564,3 +598,72 @@ pixels per OS pixel) and compare against the PBM pictures above.
 - **Upload page 0.1**, with a Model:Cycles running SAMPLE 0.2 (2026-10-14, Chrome on macOS): it
   connects, lists the +Drive, makes a folder and uploads WAV files, which the browser lists and
   SAMPLE plays.
+- **Machine 0.5** (the filter, 2026-10-18): host tests (`make filter-test`, `make machine-test`,
+  the comparison of section 16), then digiemu: the filter, its ring-out, Cutoff's −64 … 63 and
+  Reso. On a Model:Cycles (2026-10-18).
+
+## 16. The filter
+
+**What it is.** The Model:Samples' filter, rebuilt: one knob (SWEEP) that closes a lowpass to the
+left of 64 and a highpass to the right, resonance on CONTOUR, 2 poles, 12 dB per octave. Nothing
+of Elektron's is in it. Its laws were measured by emulating the Model:Samples' coefficient path
+in Python with the tables of your own copy of its OS (the scripts stay out of this repository),
+reading the pole positions off the coefficients, and fitting formulas to them:
+
+| Law | Formula |
+|---|---|
+| Cutoff index i | the 8.8 word on the lowpass side; the word minus 16384 on the highpass side |
+| Frequency | fc = 4.918 Hz · 4400^(i / 16384): 5 Hz to 21.6 kHz, about 2 semitones per knob step (within 0.1 % of the Model:Samples over the whole range) |
+| Resonance | Q = 0.4918 · 43.8^(R · red / 32512), R the 8.8 word: 0.49 to 21.5, a peak of +3, +10.5, +19 and +27 dB at 32, 64, 96 and 127 |
+| Less resonance up top | red = 1 − (fc / 24 kHz)^2.5: a quarter is left at the top |
+| Pole radius | r = exp(−π fc / (48000 Q)) |
+| Pole angle | θ = 2π fc / 48000 · (1 − 0.70 e^(−R/3300) − 0.233 e^(−R/381)): nearly real poles at R = 0 |
+| Lowpass | G / (1 − 2 r cos θ z⁻¹ + r² z⁻²), unity at DC, no zeros |
+| Highpass | the input minus that lowpass: 6 dB per octave below the cutoff at low resonance, 12 at high, a +1 dB bump at the cutoff |
+
+**Structure.** The poles are placed with the Chamberlin state-variable form (`src/smp_filter.h`),
+whose coefficients f = |1 − r e^(jθ)| and q = (1 − r²) / f realise any pair exactly, real or
+complex, and keep low cutoffs precise in Q31. The coefficients (f/2 and q/2, since both reach 2)
+come from a 129 × 17 table over cutoff and resonance (`src/smp_filter_tab.c`, 17.5 KB, made by
+`tools/gen_filter_table.py` from the laws), bilinear in both; errors from the grid stay under
+0.1 % of the frequency and 1 % of Q. Within a block they glide linearly from the last block's
+targets, as on the Model:Samples. The loop runs on half the signal and doubles its result: near
+the top of the range the bandpass state carries up to twice the output, and only an output
+beyond full scale saturates (the Model:Samples wraps there). A lowpass starts from the first
+frame's level and a highpass from rest when the knob enters its side, so neither clicks; at
+exactly 64 the track is untouched and the states are forgotten. A track whose sample has ended
+keeps feeding the filter silence until its states drop below 2^-17.
+
+**On the device** the frame loop is `src/smp_filter_cf.S`, 26 instructions per frame for the
+lowpass and 29 for the highpass on the EMAC in fractional, saturating mode (MACSR 0xa0, which
+the voice loop already runs in): about 800 instructions per track and block, a third of the
+core's own cost. It keeps d2–d7/a2–a6 and MACSR and leaves acc0 and acc1 at zero. `smp_filter.c`
+holds the same loop as C for the host, with the EMAC's arithmetic (each product truncated to
+2^-39, sums floored to Q31 when read, saturated), so the host tests predict the device bit for
+bit; the two loops follow each other instruction by instruction.
+
+**Tests.** `make filter-test` checks the table against the laws, then runs settled sines through
+the fixed-point loop at 14 cutoffs × 5 resonances × 7 frequencies and compares with the exact
+response of the poles each setting means to place: at most 0.03 dB apart wherever the response
+is above −40 dB. It also checks that 64 is off bit for bit, the starts, the glide, a sweep at
+full resonance, and that a full-scale square at full resonance saturates and then rings down to
+nothing. `make machine-test` covers the filter's place in the chain, the ring-out, the reset at
+a machine change and the record mark. Against the emulated Model:Samples (the same scripts as
+for the laws, with `build/filter_probe` for our side) over 168 settings: median 0.10 dB apart
+where its response is above −30 dB, 90 % of the settings within 0.3 dB, the worst 1.3 dB at
+20 kHz with the cutoff at the very top and full resonance.
+
+**Cutoff's text.** The knob shows −64 … 63 with 0 in the middle, as the Model:Samples does. The
+value window, the TRACK + knob popup and the lock display all get a value's text from the
+parameter's object (section 9), so `smp_fmt_cutoff` goes into that object's formatter slot. The
+object is SNARE's SWEEP's (SAMPLE's descriptors share SNARE's objects), so the formatter first
+asks whether the selected track plays SAMPLE and otherwise writes the stock 0 … 127. The tick
+installs it once it finds the stock formatter in the slot; nothing else in the OS changes, and
+the parameter itself stays 0 … 127 with 64 in the middle for the LFO, locks, NRPN and saving.
+
+**Differences from the Model:Samples, on purpose.** The highpass passes at unity, not 12 dB down.
+On the highpass side the Model:Samples' idle lowpass stage (−0.8 dB at 10 kHz, −1.9 dB at
+20 kHz) is not reproduced. A loud resonance saturates instead of wrapping. The log-table quirk
+at cutoff 60 / resonance 32 is not reproduced. And the filter sits before Volume + Dist, inside
+the machine, where the Model:Samples has it after: with DIST above 0 the distortion acts on the
+filtered signal rather than the filter on the distorted one.

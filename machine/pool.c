@@ -1,11 +1,15 @@
 /* Sample memory of SAMPLE, see pool.h. */
 #include "pool.h"
+#include "smp_filter.h"
+#include "view.h"
 #include "os.h"
 
 #define SOUND_SIZE  100
 #define MACHINE_AT  38                  /* sound: machine index (high byte of k 9) */
 #define KEY_AT      70                  /* sound: k 25..27 = inode, id high, id low */
 #define REC_KEY_AT  76                  /* sound record: slots 24..26 (free in the OS) */
+#define REC_FILTER_AT 82                /* sound record: slot 27 (free): 1 once SWEEP means the filter */
+#define SWEEP_AT    32                  /* sound: k 6, SAMPLE's cutoff; 0 in sounds from before 0.5 */
 #define REC_VERSION 4                   /* sound record: format version (the load takes 2 only) */
 #define HEADER      64                  /* sample file: header, then big-endian PCM */
 #define READ_BUDGET (128 * 1024)        /* bytes read per tick */
@@ -145,9 +149,12 @@ void smp_after_save(char *record, const char *sound)
         return;
     for (i = 0; i < 3; i++)
         ((uint16_t *)(record + REC_KEY_AT))[i] = ((const uint16_t *)(sound + KEY_AT))[i];
+    *(uint16_t *)(record + REC_FILTER_AT) = 1;
 }
 
-/* The load has cleared k 0..32 of the sound (0x4005af12) and accepts version 2 only. */
+/* The load has cleared k 0..32 of the sound (0x4005af12) and accepts version 2 only. A record
+   from before the filter (0.4 and earlier, or the official OS) has SWEEP at 0, which would be a
+   closed lowpass: it loads with the filter open. */
 void smp_after_load(char *sound, const char *record)
 {
     int i;
@@ -156,6 +163,8 @@ void smp_after_load(char *sound, const char *record)
         return;
     for (i = 0; i < 3; i++)
         ((uint16_t *)(sound + KEY_AT))[i] = ((const uint16_t *)(record + REC_KEY_AT))[i];
+    if (*(const uint16_t *)(record + REC_FILTER_AT) == 0)
+        *(uint16_t *)(sound + SWEEP_AT) = SMP_FILTER_CENTRE;
 }
 
 /* --- slots ----------------------------------------------------------------------------------- */
@@ -503,6 +512,7 @@ static int lock(void)
 
 void smp_ui_tick(void)
 {
+    smp_view_install();
     if (!lock())
         return;
     generation++;

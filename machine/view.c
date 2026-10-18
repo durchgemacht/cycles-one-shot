@@ -14,6 +14,9 @@
 #define DESC_START  76                  /* the knob view's index of SAMPLE's Start; the build sets it */
 #endif
 #define DESC_LENGTH (DESC_START + 1)
+#ifndef CUTOFF_OBJECT
+#define CUTOFF_OBJECT 53                /* the parameter object Cutoff shares: SNARE's SWEEP; the build sets it */
+#endif
 
 #define SOUND_NAME  4                   /* sound: name, 16 bytes */
 #define SOUND_COLOR 42                  /* sound: k 11, COLOR = Start, 8.8 */
@@ -188,4 +191,46 @@ void smp_knob_draw(void *view, smp_bitmap *b)
         smp_view_draw(b, s);
     else
         KNOB_DRAW(view, b);
+}
+
+/* --- Cutoff's value ------------------------------------------------------------------------- */
+
+/* Cutoff shows -64..63 as on the Model:Samples: the lowpass side below zero, 0 off, the highpass
+   side above. SAMPLE's descriptors share SNARE's parameter objects, so the formatter asks whether
+   the selected track plays SAMPLE and otherwise writes the stock 0..127. value is the 8.8 word. */
+int32_t smp_fmt_cutoff(void *self, int32_t value, char *buf)
+{
+    int32_t v = (value >> 8) - 64, n = 0;
+    char digits[4];
+    int i = 0;
+
+    if (!sample_sound())
+        return FMT_INT(self, value, buf);
+    if (v < 0) {
+        buf[n++] = '-';
+        v = -v;
+    }
+    do {
+        digits[i++] = (char)('0' + v % 10);
+        v /= 10;
+    } while (v);
+    while (i)
+        buf[n++] = digits[--i];
+    buf[n] = 0;
+    return n;
+}
+
+/* Puts smp_fmt_cutoff into the shared object, once the OS has built it with the stock formatter
+   in place (anything else there is left alone). The tick calls this; it is done after the first
+   screen redraw. */
+void smp_view_install(void)
+{
+    static int done;
+
+    if (done)
+        return;
+    if (UI_FORMATTER(CUTOFF_OBJECT) == FMT_INT) {
+        UI_FORMATTER(CUTOFF_OBJECT) = smp_fmt_cutoff;
+        done = 1;
+    }
 }

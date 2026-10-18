@@ -19,4 +19,10 @@ void smp_view_draw(smp_bitmap *b, const char *sound);
 void smp_main_draw(void *view, smp_bitmap *b);
 void smp_knob_draw(void *view, smp_bitmap *b);
 
+/* Cutoff's value as text, -64..63 with 0 in the middle, when the selected track plays SAMPLE; the
+   stock 0..127 otherwise (the object is SNARE's SWEEP's too). Installed into the object by
+   smp_view_install, which the tick calls; it does its work once. */
+int32_t smp_fmt_cutoff(void *self, int32_t value, char *buf);
+void smp_view_install(void);
+
 #endif

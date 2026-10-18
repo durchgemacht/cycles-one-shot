@@ -8,8 +8,9 @@ The goal for now is the Model:Samples' sampler on the Cycles, in sound and in fe
 is there: SAMPLE plays a sample the way the Model:Samples does, with 6-tap interpolation at twice
 the rate, then a 2:1 decimator. Nothing of it is copied from Elektron. The interpolation and its
 table are our own design and code; the decimator is the one the Cycles OS already has, which SAMPLE
-calls where it is (the Model:Samples uses the same). Start and Length work as on the
-Model:Samples. Still to come from the Model:Samples: looping, reverse playback and its filter.
+calls where it is (the Model:Samples uses the same). Start, Length and the filter work as on the
+Model:Samples; the filter follows its measured laws with our own design and code. Still to come
+from the Model:Samples: looping and reverse playback.
 
 ## Features
 
@@ -25,6 +26,11 @@ Model:Samples. Still to come from the Model:Samples: looping, reverse playback a
   length and 120 splits evenly into slices.
 - **No clicks at the edges.** 4 ms fades at the end of what a trig plays, and at its start when
   Start lies inside the sample. A sample played from its first frame keeps its attack.
+- **The Model:Samples' filter.** One knob, SWEEP, closes a lowpass to the left of 64 and a highpass
+  to the right; CONTOUR adds resonance, up to a +27 dB peak at the cutoff. Frequency, resonance
+  and how the resonance thins out towards the top follow the Model:Samples, measured on its OS
+  and rebuilt from scratch: a 2-pole filter on the ColdFire's EMAC, about 800 instructions per
+  track and block. At 0 (the default, the knob's middle) the track is untouched, bit for bit.
 - **A waveform view.** On a SAMPLE track the main screen shows the sample's name in a bar like the
   OS's own browser title, and the waveform across the whole width. Lines mark where a trig starts
   and stops; they move while you turn Start and Length.
@@ -36,11 +42,14 @@ Model:Samples. Still to come from the Model:Samples: looping, reverse playback a
 | PITCH (in tenths; FUNC + PITCH in semitones), the trig's note | pitch, as on every machine. PITCH 0 at note 60 plays the sample as recorded |
 | COLOR | Start, 0–120 |
 | SHAPE | Length, 0–120; it ends at Start + Length, at most at the sample's end. 120 (the default) plays to the end |
-| SWEEP, CONTOUR | nothing yet |
+| SWEEP | Cutoff, shown as −64 … 63 like the Model:Samples: below 0 a lowpass that closes towards −64 (5 Hz), above 0 a highpass that closes towards 63 (19 kHz); 0 = off |
+| CONTOUR | Reso, resonance 0–127 |
 | DECAY, GATE, PUNCH | the stock amp chain, set up as on TONE. DECAY starts at 127, so a sample plays out; GATE is heard with a lower DECAY |
 
 ## Status
 
+- **Machine 0.5** (the filter, Cutoff shown as −64 … 63): tested on a Model:Cycles (2026-10-18),
+  and in the digiemu emulator. A sound saved by 0.4 or earlier loads with the filter off.
 - **Machine 0.4** (waveform view, Start and Length as on the Model:Samples, fades): tested on a
   Model:Cycles (2026-10-17), and in the digiemu emulator.
 - **Upload page 0.1:** tested with a Model:Cycles (Chrome on macOS).
@@ -60,7 +69,7 @@ Model:Samples. Still to come from the Model:Samples: looping, reverse playback a
    python3 machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
    ```
 
-   This writes `build/model-cycles_OS1.13-sampler-v0.4.syx` and checks every change against the
+   This writes `build/model-cycles_OS1.13-sampler-v0.5.syx` and checks every change against the
    stock bytes.
 2. **Install it** over USB the way you install an official OS update. To go back, install the
    official 1.13 file the same way.

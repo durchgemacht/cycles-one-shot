@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SAMPLE 0.4: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
+"""SAMPLE 0.5: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
 
 The machine plays samples from the +Drive once per trig, through the one-shot core (src/smp_core.c)
 and the bridge (machine/sampler.c). A sample is chosen for a track in the PRESET browser and saved
@@ -16,7 +16,7 @@ imports the machinery from your clone of Modded-Cycles (it changes nothing there
 machine with the m68k-elf toolchain and writes
 
     build/sampler-tweak.json                  the tweak, in Modded-Cycles' format
-    build/model-cycles_OS1.13-sampler-v0.4.syx
+    build/model-cycles_OS1.13-sampler-v0.5.syx
 
 It starts from your own copy of the official OS file (checked by its SHA-256). Modded-Cycles'
 build steps check every write against the stock bytes, refuse writes into free space the OS
@@ -36,7 +36,7 @@ import subprocess
 import sys
 import tempfile
 
-VERSION = "0.4"
+VERSION = "0.5"
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 BUILD = ROOT / "build"
@@ -48,10 +48,11 @@ BASE = 0x40000400
 # Start and Length run to 120 as on the Model:Samples (SMP_SPAN in machine/pool.h);
 # decay = default of its Amp Decay; image = the picture it borrows (the OS has only 6; 4 = TONE).
 MACHINE = dict(name="SAMPLE", image=4, decay=127,
-               knobs=(("Start", "STRT", 0, 0, 120), ("Length", "LEN", 120, 0, 120), ("Unused", "----", 0),
-                      ("Unused", "----", 0)))
+               knobs=(("Start", "STRT", 0, 0, 120), ("Length", "LEN", 120, 0, 120), ("Cutoff", "FREQ", 64),
+                      ("Reso", "RESO", 0)))
 FIRST_DESC = 76            # the descriptor of SAMPLE's first knob (COLOR = Start), after the OS's 76
-SOURCES = (ROOT / "src" / "smp_core.c", ROOT / "src" / "smp_coeffs.c", HERE / "sampler.c", HERE / "pool.c",
+SOURCES = (ROOT / "src" / "smp_core.c", ROOT / "src" / "smp_coeffs.c", ROOT / "src" / "smp_filter.c",
+           ROOT / "src" / "smp_filter_tab.c", ROOT / "src" / "smp_filter_cf.S", HERE / "sampler.c", HERE / "pool.c",
            HERE / "view.c", HERE / "hooks.S")
 CFLAGS = ["-std=c99", "-mcpu=54418", "-O2", "-ffreestanding", "-fno-builtin", "-fno-tree-loop-distribute-patterns",
           "-nostdlib", "-fno-pic", "-fno-common", "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra",
@@ -106,9 +107,11 @@ def compile_machine(gm, tmp, pay):
     (variables). Returns (bytes from pay to the end of the data, symbols, end of the variables)."""
     gx, gs = gm.gx, gm.gs
     objs = []
+    cutoff_object = "-DCUTOFF_OBJECT=%d" % (gm.g7.SNARE_DESC + 2)   # SAMPLE's knobs share SNARE's objects
     for src in SOURCES:
         o = tmp / (src.stem + ".o")
-        gx.run([gx.CROSS + "gcc", *CFLAGS, "-I%s" % (ROOT / "src"), "-I%s" % HERE, "-c", str(src), "-o", str(o)])
+        gx.run([gx.CROSS + "gcc", *CFLAGS, cutoff_object, "-I%s" % (ROOT / "src"), "-I%s" % HERE, "-c", str(src),
+                "-o", str(o)])
         objs.append(o)
     ld, elf, out = tmp / "link.ld", tmp / "sampler.elf", tmp / "sampler.bin"
     ld.write_text(LINK.format(code=pay, bss=pay + BSS_OFF))

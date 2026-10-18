@@ -43,6 +43,15 @@ void *host_fs_holder, *host_task = (void *)0x1000;
 int host_value_shown, host_trig_held, host_track, host_main_draws, host_knob_draws;
 const void *host_font;
 const char host_font_small[] = "small", host_font_medium[] = "medium";
+_Alignas(8) char host_ui_objects[76 * 100];
+static int fmt_int_calls;
+
+int32_t host_fmt_int(void *self, int32_t value, char *buf)
+{
+    (void)self;
+    fmt_int_calls++;
+    return sprintf(buf, "%d", (int)(value >> 8));
+}
 static int live_kit;                            /* the pattern whose kit is live */
 static int32_t states[6][12];
 static int amp_calls, dec_calls;
@@ -312,6 +321,8 @@ static void reset_all(void)
     host_track = 0;
     host_main_draws = host_knob_draws = 0;
     ntexts = 0;
+    memset(host_ui_objects, 0, sizeof host_ui_objects);
+    fmt_int_calls = 0;
 }
 
 static int tick_until(uint32_t id, int state, int limit)
@@ -343,6 +354,7 @@ static void defaults(void)
     memset(params, 0, sizeof params);
     set_param(0x14, 64 << 8);                    /* PITCH */
     set_param(0x18, 120 << 8);                   /* Length: the whole sample */
+    set_param(0x1a, 64 << 8);                    /* Cutoff: the filter off */
     set_param(0x22, 64 << 8);                    /* FINE */
     params[0x24] = 127;                          /* DECAY */
 }
@@ -1019,6 +1031,232 @@ static void test_view_states(void)
     preview("view-not-found");
 }
 
+/* --- the filter ------------------------------------------------------------------------------- */
+
+/* SWEEP at 64 (the default of a new sound) leaves the chain's output untouched; below, a lowpass
+   that closes: at 0 (5 Hz) hardly any of a tone's movement passes (the lowpass starts from the
+   first frame's level, so levels are not compared). */
+static void test_filter_off_and_lowpass(void)
+{
+    int32_t out[SMP_BLOCK], ref[SMP_BLOCK];
+    double on = 0, off = 0;
+    int b, i;
+
+    reset_all();
+    defaults();
+    *v32(1, 0x230) = 0x7fffffff;                /* the amp envelope's stand-in stays open */
+    add_file(90, 0x9001, 9600, 0, 48000, lr);            /* a tone at the top of the band */
+    make_sound(host_sound(1), 90, 0x9001);
+    tick_until(0x9001, SLOT_READY, 5);
+    target_names(1, 0x9001);
+    set_param(0x1a, 64 << 8);                             /* Cutoff 64: off */
+    block(1, 1, 60 << 16, ref);
+    CHECK(filters[1].mode == SMP_FILTER_OFF, "64 is off");
+    for (b = 0; b < 8; b++) {
+        block(1, 0, 60 << 16, ref);
+        for (i = 1; i < SMP_BLOCK; i++)
+            off += fabs((double)ref[i] - ref[i - 1]);
+    }
+    CHECK(voices[1].active, "playing");
+    reset_all();
+    defaults();
+    *v32(1, 0x230) = 0x7fffffff;
+    add_file(90, 0x9001, 9600, 0, 48000, lr);
+    make_sound(host_sound(1), 90, 0x9001);
+    tick_until(0x9001, SLOT_READY, 5);
+    target_names(1, 0x9001);
+    set_param(0x1a, 0);                                   /* Cutoff 0: lowpass at 5 Hz */
+    block(1, 1, 60 << 16, out);
+    CHECK(filters[1].mode == SMP_FILTER_LP, "0 is a lowpass");
+    for (b = 0; b < 8; b++) {
+        block(1, 0, 60 << 16, out);
+        for (i = 1; i < SMP_BLOCK; i++)
+            on += fabs((double)out[i] - out[i - 1]);
+    }
+    CHECK(off > 0 && on < off / 50, "the lowpass at 5 Hz lets %.0f of %.0f through", on, off);
+
+    set_param(0x1a, 100 << 8);                            /* Cutoff 100: a highpass */
+    block(1, 0, 60 << 16, out);
+    CHECK(filters[1].mode == SMP_FILTER_HP, "100 is a highpass");
+}
+
+/* The off filter changes nothing, bit for bit: the same blocks with and without it. */
+static void test_filter_off_exact(void)
+{
+    int32_t out[SMP_BLOCK], ref[SMP_BLOCK];
+    int b;
+
+    reset_all();
+    defaults();
+    *v32(2, 0x230) = 0x7fffffff;                /* the amp envelope's stand-in stays open */
+    add_file(91, 0x9005, 9600, 0, 48000, ramp);
+    make_sound(host_sound(2), 91, 0x9005);
+    tick_until(0x9005, SLOT_READY, 5);
+    target_names(2, 0x9005);
+    set_param(0x1a, 64 << 8);
+    for (b = 0; b < 6; b++) {
+        smp_voice saved = voices[2];
+        int32_t st[12];
+
+        memcpy(st, states[2], sizeof st);
+        block(2, b == 0, 60 << 16, ref);
+        voices[2] = saved;                                /* the same block again, filter run forced */
+        memcpy(states[2], st, sizeof st);
+        filters[2].mode = SMP_FILTER_OFF;
+        block(2, b == 0, 60 << 16, out);
+        CHECK(!memcmp(out, ref, sizeof out), "block %d differs", b);
+    }
+    CHECK(voices[2].active, "playing");
+}
+
+/* Once the sample has ended, a resonant filter keeps sounding on silence until it has died away;
+   then the track is quiet and the filter still set. */
+static void test_filter_rings_out(void)
+{
+    int32_t out[SMP_BLOCK];
+    int b, ringing = 0, quiet = 0, i;
+
+    reset_all();
+    defaults();
+    *v32(3, 0x230) = 0x7fffffff;                /* the amp envelope's stand-in stays open */
+    add_file(92, 0x9003, 480, 0, 48000, ramp);            /* 10 ms */
+    make_sound(host_sound(3), 92, 0x9003);
+    tick_until(0x9003, SLOT_READY, 5);
+    target_names(3, 0x9003);
+    set_param(0x1a, 32 << 8);                             /* lowpass at 326 Hz */
+    set_param(0x1c, 127 << 8);                            /* full resonance */
+    block(3, 1, 60 << 16, out);
+    for (b = 0; b < 3000 && !quiet; b++) {
+        int any = 0;
+
+        block(3, 0, 60 << 16, out);
+        for (i = 0; i < SMP_BLOCK; i++)
+            any |= out[i] != 0;
+        if (!voices[3].active) {
+            if (any)
+                ringing++;
+            else
+                quiet = 1;
+        }
+    }
+    CHECK(!voices[3].active, "the sample ended");
+    CHECK(ringing > 20, "rang for %d blocks after the end", ringing);
+    CHECK(quiet && !smp_filter_ringing(&filters[3]), "fell quiet");
+    CHECK(filters[3].mode == SMP_FILTER_LP, "still set");
+    for (i = 0; i < SMP_BLOCK; i++)
+        CHECK(out[i] == 0, "silence afterwards");
+}
+
+/* A machine change forgets the filter with the rest of the voice. */
+static void test_filter_machine_change(void)
+{
+    int32_t out[SMP_BLOCK];
+
+    reset_all();
+    defaults();
+    *v32(4, 0x230) = 0x7fffffff;                /* the amp envelope's stand-in stays open */
+    add_file(93, 0x9007, 4800, 0, 48000, ramp);
+    make_sound(host_sound(4), 93, 0x9007);
+    tick_until(0x9007, SLOT_READY, 5);
+    target_names(4, 0x9007);
+    set_param(0x1a, 20 << 8);
+    set_param(0x1c, 100 << 8);
+    block(4, 1, 60 << 16, out);
+    block(4, 0, 60 << 16, out);
+    CHECK(filters[4].mode == SMP_FILTER_LP && (filters[4].l || filters[4].b), "filtering");
+    *v32(4, MARK_OFF) = 0;                                /* the voice reset of a machine change */
+    set_param(0x1a, 64 << 8);
+    block(4, 0, 60 << 16, out);
+    CHECK(filters[4].mode == SMP_FILTER_OFF && !filters[4].l && !filters[4].b, "forgotten");
+}
+
+/* Sound records: a save marks slot 27, so a load knows SWEEP is the filter; a record without the
+   mark (0.4 and before, the official OS) loads with the filter open instead of a closed lowpass. */
+static void test_filter_record(void)
+{
+    char sound[100], record[100];
+    uint16_t w;
+
+    memset(sound, 0, sizeof sound);
+    memset(record, 0, sizeof record);
+    sound[38] = SAMPLE_MACHINE;
+    *(int32_t *)(record + 4) = 2;
+    smp_after_save(record, sound);
+    memcpy(&w, record + 82, 2);
+    CHECK(w == 1, "save marks slot 27: %d", w);
+
+    w = 0;                                                /* an old record: SWEEP 0, no mark */
+    memcpy(record + 82, &w, 2);
+    memcpy(sound + 32, &w, 2);
+    smp_after_load(sound, record);
+    memcpy(&w, sound + 32, 2);
+    CHECK(w == SMP_FILTER_CENTRE, "an old record opens the filter: %d", w);
+
+    w = 1;                                                /* a new record: SWEEP 0 is a closed lowpass */
+    memcpy(record + 82, &w, 2);
+    w = 0;
+    memcpy(sound + 32, &w, 2);
+    smp_after_load(sound, record);
+    memcpy(&w, sound + 32, 2);
+    CHECK(w == 0, "a marked record keeps SWEEP: %d", w);
+
+    sound[38] = 0;                                        /* not SAMPLE: untouched */
+    smp_after_load(sound, record);
+    memcpy(&w, sound + 32, 2);
+    CHECK(w == 0, "another machine's sound: %d", w);
+}
+
+/* Cutoff's text: -64..63 with 0 in the middle on a SAMPLE track; the stock 0..127 on any other,
+   since the object is SNARE's SWEEP's as well. */
+static void test_cutoff_text(void)
+{
+    static const struct {
+        int32_t word;
+        const char *text;
+    } cases[] = {
+        { 0, "-64" }, { 0x3fff, "-1" }, { 0x3f00, "-1" }, { 0x4000, "0" }, { 0x40ff, "0" }, { 0x4100, "1" },
+        { 0x4a00, "10" }, { 0x7f00, "63" }, { 0x2000, "-32" },
+    };
+    char buf[16];
+    unsigned i;
+    int32_t n;
+
+    reset_all();
+    host_track = 2;
+    make_sound(host_sound(2), 1, 0x11);
+    for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        memset(buf, 'x', sizeof buf);
+        n = smp_fmt_cutoff(0, cases[i].word, buf);
+        CHECK(!strcmp(buf, cases[i].text) && n == (int32_t)strlen(buf), "%#x: %s (%d), want %s", (unsigned)cases[i].word,
+              buf, (int)n, cases[i].text);
+    }
+    CHECK(fmt_int_calls == 0, "SAMPLE's text came from the stock");
+    host_sound(2)[38] = 1;                                /* the track plays SNARE now */
+    n = smp_fmt_cutoff(0, 0x2000, buf);
+    CHECK(fmt_int_calls == 1 && !strcmp(buf, "32") && n == 2, "SNARE: %s", buf);
+    host_track = -1;                                      /* no track selected */
+    smp_fmt_cutoff(0, 0x2000, buf);
+    CHECK(fmt_int_calls == 2 && !strcmp(buf, "32"), "no track: %s", buf);
+}
+
+/* The tick puts the formatter into the shared object once it holds the stock one, and leaves any
+   other alone. */
+static void test_cutoff_install(void)
+{
+    smp_formatter other = (smp_formatter)host_fmt_int + 1;
+
+    reset_all();
+    UI_FORMATTER(53) = other;                             /* not built yet, or another mod's */
+    smp_ui_tick();
+    CHECK(UI_FORMATTER(53) == other, "left alone");
+    UI_FORMATTER(53) = host_fmt_int;
+    smp_ui_tick();
+    CHECK(UI_FORMATTER(53) == smp_fmt_cutoff, "installed");
+    UI_FORMATTER(53) = host_fmt_int;                      /* done once: a later stock value stays */
+    smp_ui_tick();
+    CHECK(UI_FORMATTER(53) == host_fmt_int, "installed only once");
+}
+
 int main(void)
 {
     test_browser();
@@ -1041,6 +1279,13 @@ int main(void)
     test_view();
     test_view_states();
     test_machine_change();
+    test_filter_off_and_lowpass();
+    test_filter_off_exact();
+    test_filter_rings_out();
+    test_filter_machine_change();
+    test_filter_record();
+    test_cutoff_text();
+    test_cutoff_install();
     drop_files();
     CHECK(nested == 0, "file system calls under the lock, or the index without it: %d", nested);
     if (failures) {
