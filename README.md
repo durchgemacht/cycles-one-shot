@@ -4,8 +4,12 @@ A one-shot sampler machine for the Elektron Model:Cycles, OS 1.13. It adds SAMPL
 next to the six stock ones and plays samples from the +Drive. You choose a sample in the OS's own
 PRESET browser, and it is saved with the sound.
 
-The goal is a sampler for the Cycles that is small and stands on its own: no new menus, a few
-separate parts instead of a firmware overhaul. Not a monolith: just the basics, ready to grow.
+The goal for now is the Model:Samples' sampler on the Cycles, in sound and in features. The sound
+is there: SAMPLE plays a sample the way the Model:Samples does, with 6-tap interpolation at twice
+the rate, then a 2:1 decimator. Nothing of it is copied from Elektron. The interpolation and its
+table are our own design and code; the decimator is the one the Cycles OS already has, which SAMPLE
+calls where it is (the Model:Samples uses the same). Start and Length work as on the
+Model:Samples. Still to come from the Model:Samples: looping, reverse playback and its filter.
 
 ## Features
 
