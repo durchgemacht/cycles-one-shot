@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SAMPLE 0.5: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
+"""SAMPLE 0.6: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
 
 The machine plays samples from the +Drive once per trig, through the one-shot core (src/smp_core.c)
 and the bridge (machine/sampler.c). A sample is chosen for a track in the PRESET browser and saved
@@ -16,7 +16,7 @@ imports the machinery from your clone of Modded-Cycles (it changes nothing there
 machine with the m68k-elf toolchain and writes
 
     build/sampler-tweak.json                  the tweak, in Modded-Cycles' format
-    build/model-cycles_OS1.13-sampler-v0.5.syx
+    build/model-cycles_OS1.13-sampler-v0.6.syx
 
 It starts from your own copy of the official OS file (checked by its SHA-256). Modded-Cycles'
 build steps check every write against the stock bytes, refuse writes into free space the OS
@@ -36,7 +36,7 @@ import subprocess
 import sys
 import tempfile
 
-VERSION = "0.5"
+VERSION = "0.6"
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 BUILD = ROOT / "build"

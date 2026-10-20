@@ -31,6 +31,8 @@ from the Model:Samples: looping and reverse playback.
   and how the resonance thins out towards the top follow the Model:Samples, measured on its OS
   and rebuilt from scratch: a 2-pole filter on the ColdFire's EMAC, about 800 instructions per
   track and block. At 0 (the default, the knob's middle) the track is untouched, bit for bit.
+  Across the middle and from one side to the other the filter fades rather than switches, so
+  a square, ramp or random LFO on Cutoff, a p-lock or the knob itself does not click.
   One difference: the filter runs inside the machine, after the amp envelope and before
   Volume + Dist, where the Model:Samples has it after. Volume + Dist is a stage of the OS's
   track chain that runs after every machine, so putting the filter behind it would mean changing
@@ -54,6 +56,9 @@ from the Model:Samples: looping and reverse playback.
 
 ## Status
 
+- **Machine 0.6** (the filter fades across the middle and between its sides instead of
+  switching, after a report that a square, ramp or random LFO on Cutoff clicked in 0.5): tested
+  on a Model:Cycles (2026-10-20), and in the digiemu emulator.
 - **Machine 0.5** (the filter, Cutoff shown as −64 … 63): tested on a Model:Cycles (2026-10-18),
   and in the digiemu emulator. A sound saved by 0.4 or earlier loads with the filter off.
 - **Machine 0.4** (waveform view, Start and Length as on the Model:Samples, fades): tested on a

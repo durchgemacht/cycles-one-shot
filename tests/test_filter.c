@@ -36,12 +36,18 @@ static void poles(int32_t i, int32_t reso, double *r, double *theta)
     *theta = w0 * (1 - 0.70 * exp(-reso / 3300.0) - 0.233 * exp(-reso / 381.0));
 }
 
-/* |H| of the lowpass G / (1 - 2 r cos th z^-1 + r^2 z^-2) (unity at DC) or of 1 minus it. */
+/* |H| of the lowpass G / (1 - 2 r cos th z^-1 + r^2 z^-2) (unity at DC) or of 1 minus it; within
+   a knob step of the centre only a share of it is heard, y = x + wet (H x - x), wet the distance
+   to the centre over 256. */
 static double response(int32_t cutoff, int32_t reso, double f)
 {
     int hp = cutoff > SMP_FILTER_CENTRE;
     double r, theta, g, w = 2 * PI * f / FS;
     double re, im, dre, dim, mag2;
+    double wet = fabs((double)(cutoff - SMP_FILTER_CENTRE)) / 256;
+
+    if (wet > 1)
+        wet = 1;
 
     poles(hp ? cutoff - SMP_FILTER_CENTRE : cutoff, reso, &r, &theta);
     g = 1 - 2 * r * cos(theta) + r * r;
@@ -55,6 +61,8 @@ static double response(int32_t cutoff, int32_t reso, double f)
         re = 1 - re;
         im = -im;
     }
+    re = 1 + wet * (re - 1);
+    im = wet * im;
     return sqrt(re * re + im * im);
 }
 
@@ -173,7 +181,8 @@ static void test_response(void)
 
 /* Off leaves the block alone; the centre is off; the lowpass starts at the signal and the
    highpass from rest, so a step into either side does not click (the EMAC's truncation leaves
-   a frame a few units short of 2^-31). */
+   a frame a few units short of 2^-31); back at the centre, wet fades out over one block before
+   the filter is off. */
 static void test_off_and_starts(void)
 {
     smp_filter flt;
@@ -198,18 +207,28 @@ static void test_off_and_starts(void)
         CHECK(abs(buf[j] - 300000000) < 64, "lowpass start frame %d: %d", j, buf[j]);
     CHECK(smp_filter_ringing(&flt), "lowpass holding a level does not ring");
 
-    /* highpass near the bottom: the first frame passes untouched */
+    /* back to off: one block lets wet glide to 0 with the side still set, then the filter is
+       off, the block untouched and ringing no longer counted */
+    smp_filter_set(&flt, SMP_FILTER_CENTRE, 0);
+    CHECK(flt.mode == SMP_FILTER_LP && flt.wett == 0 && flt.dwet < 0, "the centre fades out first");
+    smp_filter_run(&flt, buf);
+    smp_filter_set(&flt, SMP_FILTER_CENTRE, 0);
+    CHECK(flt.mode == SMP_FILTER_OFF, "off after the fade");
+    CHECK(!smp_filter_ringing(&flt), "off still rings");
+    for (j = 0; j < SMP_FILTER_BLOCK; j++)
+        buf[j] = ref[j];
+    smp_filter_run(&flt, buf);
+    CHECK(!memcmp(buf, ref, sizeof buf), "off changes the block");
+
+    /* highpass near the bottom, from off: the first frame passes untouched */
     smp_filter_set(&flt, SMP_FILTER_CENTRE + 300, 0);
+    CHECK(flt.prime && flt.wet == 0 && flt.mix == SMP_FILTER_ONE, "the highpass starts from rest");
     for (j = 0; j < SMP_FILTER_BLOCK; j++)
         buf[j] = ref[j];
     smp_filter_run(&flt, buf);
     CHECK(abs(buf[0] - ref[0]) <= 4, "highpass start: %d vs %d", buf[0], ref[0]);
     for (j = 1; j < SMP_FILTER_BLOCK; j++)
         CHECK(abs(buf[j] - ref[j]) < 2000, "highpass at 5.7 Hz frame %d: %d vs %d", j, buf[j], ref[j]);
-
-    /* back to off: ringing stops counting */
-    smp_filter_set(&flt, SMP_FILTER_CENTRE, 0);
-    CHECK(!smp_filter_ringing(&flt), "off still rings");
 }
 
 /* A changed setting glides across the block: the coefficients end within 32 LSB of the new
@@ -222,9 +241,11 @@ static void test_glide(void)
 
     smp_filter_reset(&flt);
     smp_filter_set(&flt, 4000, 1000);
+    CHECK(flt.wet == 0 && flt.dwet > 0 && flt.wett == SMP_FILTER_ONE, "wet glides in from off");
     smp_filter_run(&flt, buf);
     smp_filter_set(&flt, 9000, 20000);
     CHECK(flt.df2 != 0 && flt.dq2 != 0, "no glide");
+    CHECK(flt.wet == SMP_FILTER_ONE && flt.dwet == 0 && flt.mix == 0 && flt.dmix == 0, "the weights stand");
     f_end = flt.f2 + 32 * flt.df2;
     q_end = flt.q2 + 32 * flt.dq2;
     CHECK(labs(f_end - flt.f2t) < 32 && labs(q_end - flt.q2t) < 32, "glide misses: %d %d", f_end - flt.f2t,
@@ -290,11 +311,157 @@ static void test_saturation(void)
     printf("  saturation: rang for %.2f s after the drive\n", blocks_ringing * 32 / FS);
 }
 
+/* The blending loop at wet = 1 and mix = 0 or 1 is the plain lowpass or highpass loop: the same
+   states afterwards, the output within a few LSB (the blend's two extra roundings). */
+static void test_loops_agree(void)
+{
+    smp_filter a, b;
+    int32_t bufa[SMP_FILTER_BLOCK], bufb[SMP_FILTER_BLOCK];
+    int side, j, k;
+
+    for (side = 0; side < 2; side++) {
+        int32_t cut = side ? 20480 : 8192;
+
+        smp_filter_reset(&a);
+        for (k = 0; k < 100; k++) {                     /* settle in the steady loop */
+            for (j = 0; j < SMP_FILTER_BLOCK; j++)
+                bufa[j] = (int32_t)(1000000000.0 * sin(2 * PI * 700 * (k * 32 + j) / FS));
+            smp_filter_set(&a, cut, 24576);
+            smp_filter_run(&a, bufa);
+        }
+        CHECK(a.loop == (side ? SMP_FILTER_LOOP_HP : SMP_FILTER_LOOP_LP), "side %d: not the steady loop", side);
+        b = a;
+        b.loop = SMP_FILTER_LOOP_MIX;
+        for (j = 0; j < SMP_FILTER_BLOCK; j++)
+            bufa[j] = bufb[j] = (int32_t)(1000000000.0 * sin(2 * PI * 700 * (100 * 32 + j) / FS));
+        smp_filter_frames(&a, bufa);
+        smp_filter_frames(&b, bufb);
+        CHECK(a.l == b.l && a.b == b.b, "side %d: the loops' states differ", side);
+        for (j = 0; j < SMP_FILTER_BLOCK; j++)
+            CHECK(abs(bufa[j] - bufb[j]) <= 4, "side %d frame %d: %d vs %d", side, j, bufa[j], bufb[j]);
+    }
+}
+
+/* The knob jumping from one side to the other every 16 blocks, as a square LFO does, at full
+   resonance: the states carry on and the output blends from lp to hp across the jump's block,
+   so no frame there steps further than the filter's own frames do once settled. The same jumps
+   with the states cleared at each one, as 0.5 did, step several times further. */
+static void test_side_jump(void)
+{
+    smp_filter flt, old;
+    int32_t buf[SMP_FILTER_BLOCK], ref[SMP_FILTER_BLOCK], last = 0, last_old = 0;
+    int32_t steady = 0, jump = 0, jump_old = 0;
+    long k;
+    int blk = 0;
+
+    smp_filter_reset(&flt);
+    smp_filter_reset(&old);
+    for (k = 0; k < 48000; k += SMP_FILTER_BLOCK, blk++) {
+        int32_t cut = (blk / 16) & 1 ? 24064 : 8704;    /* H30 (252 Hz) and L30 (426 Hz) */
+        int j, at_jump = blk && blk % 16 == 0;
+
+        for (j = 0; j < SMP_FILTER_BLOCK; j++)
+            buf[j] = ref[j] = (int32_t)(200000000.0 * sin(2 * PI * 330 * (k + j) / FS));
+        smp_filter_set(&flt, cut, 32512);
+        smp_filter_set(&old, cut, 32512);
+        if (at_jump) {
+            CHECK(flt.dmix != 0 && (flt.l || flt.b) && !flt.prime, "block %d: the jump resets", blk);
+            old.l = old.b = 0;                          /* 0.5: a fresh start on the other side */
+            old.prime = 1;
+            old.mix = old.mixt;
+            old.dmix = 0;
+        }
+        smp_filter_run(&flt, buf);
+        smp_filter_run(&old, ref);
+        for (j = 0; j < SMP_FILTER_BLOCK; j++) {
+            int32_t step = abs(buf[j] - last), step_old = abs(ref[j] - last_old);
+
+            if (at_jump) {
+                if (step > jump)
+                    jump = step;
+                if (step_old > jump_old)
+                    jump_old = step_old;
+            } else if (blk % 16 >= 4 && step > steady)
+                steady = step;
+            last = buf[j];
+            last_old = ref[j];
+        }
+    }
+    printf("  side jump: biggest step %d in the jump's block, %d settled, %d with a reset\n", jump, steady, jump_old);
+    CHECK(jump <= steady, "a jump steps by %d, settled frames by %d", jump, steady);
+    CHECK(jump_old > 2 * jump, "a reset would step by %d, the blend by %d", jump_old, jump);
+}
+
+/* Within a knob step of the centre a share of the filter is heard, the distance over 256: at
+   128 above the centre on a constant, where the highpass passes nothing once settled, half of
+   the input is left. */
+static void test_centre_fade(void)
+{
+    smp_filter flt;
+    int32_t buf[SMP_FILTER_BLOCK];
+    long k;
+    int j;
+
+    smp_filter_reset(&flt);
+    smp_filter_set(&flt, SMP_FILTER_CENTRE + 64, 0);
+    CHECK(flt.wett == 64 << 23, "wet at a quarter of a step: %d", flt.wett);
+    smp_filter_set(&flt, SMP_FILTER_CENTRE - 256, 0);
+    CHECK(flt.wett == SMP_FILTER_ONE, "wet at a step: %d", flt.wett);
+    smp_filter_reset(&flt);
+    for (k = 0; k < 96000; k += SMP_FILTER_BLOCK) {
+        for (j = 0; j < SMP_FILTER_BLOCK; j++)
+            buf[j] = 1 << 28;
+        smp_filter_set(&flt, SMP_FILTER_CENTRE + 128, 0);
+        smp_filter_run(&flt, buf);
+    }
+    CHECK(flt.loop == SMP_FILTER_LOOP_MIX, "the blend loop runs within the step");
+    CHECK(abs(buf[SMP_FILTER_BLOCK - 1] - (1 << 27)) < 1 << 20, "half way at 128 above the centre: %d",
+          buf[SMP_FILTER_BLOCK - 1]);
+}
+
+/* The knob set to 64 from a side: wet glides to 0 across one block with the side and its states
+   kept, so a full-resonance lowpass fades into the dry signal instead of stepping; from the next
+   block the filter is off and the block passes bit for bit. */
+static void test_off_glide(void)
+{
+    smp_filter flt;
+    int32_t buf[SMP_FILTER_BLOCK], ref[SMP_FILTER_BLOCK];
+    double first = 0;
+    long k;
+    int j;
+
+    smp_filter_reset(&flt);
+    for (k = 0; k < 4800; k += SMP_FILTER_BLOCK) {
+        for (j = 0; j < SMP_FILTER_BLOCK; j++)
+            buf[j] = (int32_t)(200000000.0 * sin(2 * PI * 3100 * (k + j) / FS));
+        smp_filter_set(&flt, 8704, 32512);              /* L30, 426 Hz: little of 3.1 kHz passes */
+        smp_filter_run(&flt, buf);
+    }
+    for (j = 0; j < SMP_FILTER_BLOCK; j++)
+        buf[j] = ref[j] = (int32_t)(200000000.0 * sin(2 * PI * 3100 * (k + j) / FS));
+    smp_filter_set(&flt, SMP_FILTER_CENTRE, 32512);
+    CHECK(flt.mode == SMP_FILTER_LP && flt.wett == 0 && flt.dwet < 0, "fading out");
+    smp_filter_run(&flt, buf);
+    for (j = 0; j < 8; j++)
+        first += fabs((double)buf[j] - ref[j]);
+    CHECK(first > 100000000, "the first frames are still filtered: %.0f apart", first);
+    CHECK(abs(buf[SMP_FILTER_BLOCK - 1] - ref[SMP_FILTER_BLOCK - 1]) <= 4, "the last frame is dry: %d vs %d",
+          buf[SMP_FILTER_BLOCK - 1], ref[SMP_FILTER_BLOCK - 1]);
+    smp_filter_set(&flt, SMP_FILTER_CENTRE, 32512);
+    CHECK(flt.mode == SMP_FILTER_OFF, "off after the fade");
+    for (j = 0; j < SMP_FILTER_BLOCK; j++)
+        buf[j] = ref[j];
+    smp_filter_run(&flt, buf);
+    CHECK(!memcmp(buf, ref, sizeof buf), "off changes the block");
+}
+
 static void test_layout(void)
 {
     CHECK(offsetof(smp_filter, l) == 0 && offsetof(smp_filter, b) == 4 && offsetof(smp_filter, f2) == 8 &&
           offsetof(smp_filter, q2) == 12 && offsetof(smp_filter, df2) == 16 && offsetof(smp_filter, dq2) == 20 &&
-          offsetof(smp_filter, mode) == 24, "layout differs from smp_filter_cf.S");
+          offsetof(smp_filter, mode) == 24 && offsetof(smp_filter, loop) == 28 && offsetof(smp_filter, wet) == 32 &&
+          offsetof(smp_filter, dwet) == 36 && offsetof(smp_filter, mix) == 40 && offsetof(smp_filter, dmix) == 44,
+          "layout differs from smp_filter_cf.S");
 }
 
 int main(void)
@@ -303,6 +470,10 @@ int main(void)
     test_table();
     test_off_and_starts();
     test_glide();
+    test_loops_agree();
+    test_side_jump();
+    test_centre_fade();
+    test_off_glide();
     test_sweep_smooth();
     test_saturation();
     test_response();

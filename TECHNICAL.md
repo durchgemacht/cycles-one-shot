@@ -528,7 +528,7 @@ elektron-firmware-tool checks it again. Built against Modded-Cycles commit `6a97
 
 ```sh
 make test            # the core: every frame against a 64-bit reference, fades included
-make filter-test     # the filter: its table, response against its laws, starts, glide, saturation
+make filter-test     # the filter: its table, response against its laws, starts, glide, fades, saturation
 make machine-test    # bridge, sample memory, view and the filter's place, with stand-ins for the OS
 make uploader-test   # the upload page's protocol code and page, against a stand-in Cycles
 make target          # compile the core for the ColdFire: size, undefined symbols (must be none)
@@ -601,6 +601,11 @@ pixels per OS pixel) and compare against the PBM pictures above.
 - **Machine 0.5** (the filter, 2026-10-18): host tests (`make filter-test`, `make machine-test`,
   the comparison of section 16), then digiemu: the filter, its ring-out, Cutoff's −64 … 63 and
   Reso. On a Model:Cycles (2026-10-18).
+- **Machine 0.6** (the filter's fades, 2026-10-20), after a report that a square, ramp or random
+  LFO on Cutoff clicked in 0.5: host tests (`make filter-test` with the new cases of section 16,
+  `make machine-test`, `make test`), then digiemu and a Model:Cycles (2026-10-20): the LFO shapes
+  with an edge across the centre and on one side, the knob through the centre, off at 0, the
+  ring-out.
 
 ## 16. The filter
 
@@ -629,25 +634,45 @@ come from a 129 × 17 table over cutoff and resonance (`src/smp_filter_tab.c`, 1
 0.1 % of the frequency and 1 % of Q. Within a block they glide linearly from the last block's
 targets, as on the Model:Samples. The loop runs on half the signal and doubles its result: near
 the top of the range the bandpass state carries up to twice the output, and only an output
-beyond full scale saturates (the Model:Samples wraps there). A lowpass starts from the first
-frame's level and a highpass from rest when the knob enters its side, so neither clicks; at
-exactly 64 the track is untouched and the states are forgotten. A track whose sample has ended
-keeps feeding the filter silence until its states drop below 2^-17.
+beyond full scale saturates (the Model:Samples wraps there).
 
-**On the device** the frame loop is `src/smp_filter_cf.S`, 26 instructions per frame for the
-lowpass and 29 for the highpass on the EMAC in fractional, saturating mode (MACSR 0xa0, which
-the voice loop already runs in): about 800 instructions per track and block, a third of the
-core's own cost. It keeps d2–d7/a2–a6 and MACSR and leaves acc0 and acc1 at zero. `smp_filter.c`
-holds the same loop as C for the host, with the EMAC's arithmetic (each product truncated to
-2^-39, sums floored to Q31 when read, saturated), so the host tests predict the device bit for
-bit; the two loops follow each other instruction by instruction.
+One filter runs per track whichever side the knob is on; the side only picks which output is
+heard, and the states carry on through a change of side. Two weights, each 0 … 1, shape the
+output: y = x + wet (filt − x) with filt = lp + mix (hp − lp). mix is 0 on the lowpass side and
+1 on the highpass side; wet is 1 everywhere except within one knob step of the centre, where it
+is the distance to the centre over 256, the fine values the OS's smoothing or an LFO passes
+through (the same fade as Modded-Cycles' track filter). Both weights glide across the block
+like the coefficients, reaching their targets on its last frame. So the knob, a p-lock or an
+LFO can cross the centre, or jump from one side to the other within a block, without a step in
+the output: a jump from L30 to H30 at full resonance steps no further than the settled filter's
+own frames, where 0.5, which cleared the states and started the other side afresh, stepped
+six times further (`test_side_jump`). The Model:Samples gets the same effect by running both
+stages always, one of them parked; this keeps one stage and the bit-exact off. At exactly 64,
+once wet has glided to 0, the filter is off: the block passes untouched, bit for bit, and the
+states are forgotten; the next step into a side starts them afresh (a lowpass from the block's
+first frame, a highpass from rest) under the glide of wet from 0. A track whose sample has
+ended keeps feeding the filter silence until its states drop below 2^-17.
+
+**On the device** the frame loops are `src/smp_filter_cf.S`: 26 instructions per frame for the
+settled lowpass and 29 for the settled highpass (wet = 1, mix = 0 or 1, the weights still), and
+42 for the blending loop that runs the blocks in which a weight moves or stands between, on the
+EMAC in fractional, saturating mode (MACSR 0xa0, which the voice loop already runs in): about
+800 instructions per track and block settled, 1,350 while fading, a third to a half of the
+core's own cost. `smp_filter_run` picks the loop for the block. The function keeps d2–d7/a2–a6
+and MACSR and leaves acc0 and acc1 at zero. `smp_filter.c` holds the same loops as C for the
+host, with the EMAC's arithmetic (each product truncated to 2^-39, sums floored to Q31 when
+read, saturated), so the host tests predict the device bit for bit; the loops follow each other
+instruction by instruction.
 
 **Tests.** `make filter-test` checks the table against the laws, then runs settled sines through
 the fixed-point loop at 14 cutoffs × 5 resonances × 7 frequencies and compares with the exact
 response of the poles each setting means to place: at most 0.03 dB apart wherever the response
-is above −40 dB. It also checks that 64 is off bit for bit, the starts, the glide, a sweep at
-full resonance, and that a full-scale square at full resonance saturates and then rings down to
-nothing. `make machine-test` covers the filter's place in the chain, the ring-out, the reset at
+is above −40 dB (within a step of the centre, against the law with its share of the filter). It
+also checks that 64 is off bit for bit, the starts, the glide, that the blending loop at wet = 1
+and mix = 0 or 1 gives the settled loops' states and output, the jump from side to side against
+a reset, the fade within a step of the centre (half the input is left at 128 above it), the fade
+out at the centre, a sweep at full resonance, and that a full-scale square at full resonance
+saturates and then rings down to nothing. `make machine-test` covers the filter's place in the chain, the ring-out, the reset at
 a machine change and the record mark. Against the emulated Model:Samples (the same scripts as
 for the laws, with `build/filter_probe` for our side) over 168 settings: median 0.10 dB apart
 where its response is above −30 dB, 90 % of the settings within 0.3 dB, the worst 1.3 dB at
