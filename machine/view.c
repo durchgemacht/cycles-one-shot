@@ -10,8 +10,13 @@
 #include "pool.h"
 #include "os.h"
 
-#ifndef DESC_START
-#define DESC_START  76                  /* the knob view's index of SAMPLE's Start; the build sets it */
+/* The knob view's index of SAMPLE's Start (its first descriptor): the build sets it, as a symbol or a
+   constant (CM_SYMBOLS, see pool.h). */
+#ifdef CM_SYMBOLS
+extern char cm_descriptor_base[];
+#define DESC_START  ((int32_t)(long)cm_descriptor_base)
+#elif !defined(DESC_START)
+#define DESC_START  76
 #endif
 #define DESC_LENGTH (DESC_START + 1)
 #ifndef CUTOFF_OBJECT

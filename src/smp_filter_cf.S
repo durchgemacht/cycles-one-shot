@@ -15,7 +15,8 @@
    centre, changes side or stands within a step of the centre.
    Keeps d2-d7/a2-a6 and MACSR; leaves acc0 and acc1 at zero. */
 
-	.text
+	.section .text.smp_filter_cf,"ax"	/* a section of its own, like -ffunction-sections (Level B builders keep file order) */
+	.p2align 2		/* the alignment plain .text had */
 	.globl	smp_filter_frames
 smp_filter_frames:
 	lea	-44(%sp), %sp

@@ -1,7 +1,8 @@
 /* SAMPLE's ways into the Model:Cycles OS 1.13 that need assembly. The tick (smp_hook_tick) is C, in
    pool.c. machine/build.py writes the jumps to these places. */
 
-	.text
+	.section .text.smp_hooks,"ax"	/* a section of its own, like -ffunction-sections (Level B builders keep file order) */
+	.p2align 2		/* the alignment plain .text had */
 
 /* The browser opens a file (0x400a6602: jsr 0x400a3052 becomes jsr smp_hook_open). On entry
    a0 = &result, 4(sp) = &handle {inode, id, size, -}, and a2 points at the browser, whose word +664

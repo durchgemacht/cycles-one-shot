@@ -14,8 +14,14 @@
 
 #include <stdint.h>
 
-#ifndef SAMPLE_MACHINE
-#define SAMPLE_MACHINE 6                /* SAMPLE's index among the machines; the build sets it */
+/* SAMPLE's index among the machines: the build sets it. With CM_SYMBOLS it is the address of an undefined
+   symbol that the composer resolves when it places the compiled object (a Level B builder, which never
+   compiles: the object is built once and composed many times); otherwise a compile-time constant. */
+#ifdef CM_SYMBOLS
+extern char cm_machine_index[];
+#define SAMPLE_MACHINE ((int)(long)cm_machine_index)
+#elif !defined(SAMPLE_MACHINE)
+#define SAMPLE_MACHINE 6
 #endif
 #define SLOTS 128
 /* Start (COLOR) and Length (SHAPE) as on the Model:Samples (0x400a62dc there): 8.8 words from 0 to

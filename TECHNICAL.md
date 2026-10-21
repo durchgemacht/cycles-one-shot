@@ -81,7 +81,10 @@ maximum, `+0x10` default (8.8 values), `+0x2c` long name, `+0x34` short name. Th
 Length (0–120, default 120), 78 and 79 unused, 80 Amp Decay (default 127). SAMPLE is machine 6 and
 borrows picture 4 (TONE's) for the MACHINES page; the OS has only six pictures. In a combined build
 the registrar assigns the index and the descriptors from SAMPLE's place in the list; the build hands
-them to the compiler (`SAMPLE_MACHINE`, `DESC_START`), and the knobs' parameter objects are SNARE's
+them to the compiler (`SAMPLE_MACHINE`, `DESC_START`), or, with `CM_SYMBOLS` defined, leaves them as the
+undefined symbols `cm_machine_index` and `cm_descriptor_base` that a Level B builder resolves when it places
+the compiled object (the object is then compiled once and composed many times; each assembly file has a
+section of its own so that such a builder keeps the file order), and the knobs' parameter objects are SNARE's
 for every added machine (the accessor detour of notes/18), which is why the Cutoff formatter asks
 whether the selected track plays SAMPLE before it writes anything (section 9).
 
@@ -530,7 +533,7 @@ From reading its MAIN OS; addresses here are the Model:Samples'.
 
 **Build.** `machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
 [--tool path/to/elektron-firmware-tool]` starts from your copy of the official file (checked by
-its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.7.syx`, a `.json` report and the
+its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.8.syx`, a `.json` report and the
 tweak in Modded-Cycles' format (`build/sampler-tweak.json`). That tweak file is the machine as
 Modded-Cycles' own `tools/build.py` installs it: copied into its `tweaks/model-cycles_OS1.13/`
 folder as `27-sampler.json`, `python3 tools/build.py -i model-cycles_OS1.13.syx -t sampler` gives
@@ -622,6 +625,10 @@ pixels per OS pixel) and compare against the PBM pictures above.
   `make machine-test`, `make test`), then digiemu and a Model:Cycles (2026-10-20): the LFO shapes
   with an edge across the centre and on one side, the knob through the centre, off at 0, the
   ring-out.
+- **Machine 0.8** (patch points as symbols behind `CM_SYMBOLS`, own sections for the assembly files,
+  2026-10-21): One-Shot's own build gives the 0.7 MAIN OS byte for byte (`7e40344e…`); host tests
+  (`make test`, `make machine-test`); the symbol build in model27, placed by its relocator and byte for
+  byte what `ld` links from the same object, alone and with a second added machine, in digiemu.
 - **Machine 0.7** (SAMPLE through Modded-Cycles' registrar, 2026-10-21): host tests (`make test`,
   `make filter-test`, `make machine-test`), `make target`, the build against Modded-Cycles `95b63b7`
   with elektron-firmware-tool's check; the tweak file in a copy of Modded-Cycles: `check_overlaps.py`

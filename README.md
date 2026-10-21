@@ -56,6 +56,12 @@ from the Model:Samples: looping and reverse playback.
 
 ## Status
 
+- **Machine 0.8** (for builders that compose machines from compiled objects, like model27's: with
+  `CM_SYMBOLS` defined, the machine index and the first descriptor are undefined symbols the builder
+  resolves when it places the object, and each assembly file has a section of its own; without it, the
+  build is byte for byte the 0.7 build): One-Shot's own build is unchanged, the symbol build tested in
+  the digiemu emulator through model27's composer (2026-10-21), alone and next to a second added
+  machine; not yet on a device.
 - **Machine 0.7** (registered through Modded-Cycles' own registrar for added machines, the one MACRO and
   ACID use, so that a combined build can hold several added machines; the payload moves to `0x43000000`
   and the sample pool to `0x43800000`–`0x46700000`, 47 MB; what it conflicts with is computed from the
@@ -90,7 +96,7 @@ from the Model:Samples: looping and reverse playback.
    python3 machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
    ```
 
-   This writes `build/model-cycles_OS1.13-sampler-v0.7.syx` and `build/sampler-tweak.json`, the
+   This writes `build/model-cycles_OS1.13-sampler-v0.8.syx` and `build/sampler-tweak.json`, the
    same machine as a tweak file Modded-Cycles' own `tools/build.py` accepts, and checks every change
    against the stock bytes.
 2. **Install it** over USB the way you install an official OS update. To go back, first set every
