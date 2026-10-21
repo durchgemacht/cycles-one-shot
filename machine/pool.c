@@ -17,8 +17,15 @@
 #define RATE_MAX    192000
 
 #ifndef POOL_BEGIN
-#define POOL_BEGIN  ((char *)0x42800000)        /* free in the Cycles OS: the Model:Samples' pool */
-#define POOL_END    ((char *)0x46700000)        /* SAMPLE's own payload starts here */
+/* The sample pool: RAM the Cycles OS leaves unused (the Model:Samples keeps its pool there), above
+   the window where the added machines' payload runs (0x43000000, Modded-Cycles' PAY_ALONE). The
+   build sets POOL_BASE and POOL_LIMIT; the host tests replace POOL_BEGIN and POOL_END. */
+#ifndef POOL_BASE
+#define POOL_BASE   0x43800000u
+#define POOL_LIMIT  0x46700000u
+#endif
+#define POOL_BEGIN  ((char *)POOL_BASE)
+#define POOL_END    ((char *)POOL_LIMIT)
 #endif
 
 /* Keeps the compiler from moving memory accesses across it: what the audio side may read is

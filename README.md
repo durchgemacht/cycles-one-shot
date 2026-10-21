@@ -56,6 +56,12 @@ from the Model:Samples: looping and reverse playback.
 
 ## Status
 
+- **Machine 0.7** (registered through Modded-Cycles' own registrar for added machines, the one MACRO and
+  ACID use, so that a combined build can hold several added machines; the payload moves to `0x43000000`
+  and the sample pool to `0x43800000`–`0x46700000`, 47 MB; what it conflicts with is computed from the
+  clone's tweaks instead of listed by hand): host-tested, checked with Modded-Cycles' own overlap
+  checker, registry and build, alone and with fifteen other mods, and tested on a Model:Cycles
+  (2026-10-21).
 - **Machine 0.6** (the filter fades across the middle and between its sides instead of
   switching, after a report that a square, ramp or random LFO on Cutoff clicked in 0.5): tested
   on a Model:Cycles (2026-10-20), and in the digiemu emulator.
@@ -64,8 +70,12 @@ from the Model:Samples: looping and reverse playback.
 - **Machine 0.4** (waveform view, Start and Length as on the Model:Samples, fades): tested on a
   Model:Cycles (2026-10-17), and in the digiemu emulator.
 - **Upload page 0.1:** tested with a Model:Cycles (Chrome on macOS).
-- **Limits:** SAMPLE cannot be combined with Model-TG or with Modded-Cycles' track filter, which
-  hook the same functions of the OS.
+- **Limits:** SAMPLE is a tweak of its own, so it cannot be installed next to another tweak that adds
+  machines (MACRO, ACID, the Syntakt engines, the SD Vintage variants) until a combined build exists;
+  nor with Model-TG or Modded-Cycles' track filter, which hook the same sound record functions of the
+  OS; nor with sample preview. The build computes that list from the clone's tweaks. Every other mod of
+  Modded-Cycles 1.55 combines with SAMPLE at the byte level, checked with Modded-Cycles' own tools, but
+  not yet tried together on a machine.
 - **Not One-Shot's doing:** when loading a project asks "Save … before loading?", Yes saves the
   project you leave but does not load the other one. The official OS 1.13 does the same.
 
@@ -73,17 +83,19 @@ from the Model:Samples: looping and reverse playback.
 
 1. **Build the image** from your own copy of the official `model-cycles_OS1.13.syx`. You need
    Python 3, the m68k-elf toolchain (Homebrew: `m68k-elf-gcc`, `m68k-elf-binutils`) and a clone
-   of [Modded-Cycles](https://github.com/18nelli18/Modded-Cycles), whose machine-adding tools the
-   build uses:
+   of [Modded-Cycles](https://github.com/18nelli18/Modded-Cycles) at a release with the mod picker
+   (1.53 to 1.56: the build calls its registrar for added machines, `gen_macro.added_machine`):
 
    ```sh
    python3 machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
    ```
 
-   This writes `build/model-cycles_OS1.13-sampler-v0.5.syx` and checks every change against the
-   stock bytes.
-2. **Install it** over USB the way you install an official OS update. To go back, install the
-   official 1.13 file the same way.
+   This writes `build/model-cycles_OS1.13-sampler-v0.7.syx` and `build/sampler-tweak.json`, the
+   same machine as a tweak file Modded-Cycles' own `tools/build.py` accepts, and checks every change
+   against the stock bytes.
+2. **Install it** over USB the way you install an official OS update. To go back, first set every
+   SAMPLE track to one of the six stock machines (a project that still names a machine the official
+   OS does not have can freeze its MACHINES page), then install the official 1.13 file the same way.
 3. **Put samples on the +Drive.** Samples already there, for example from the Model:Samples OS,
    work as they are. For new ones open `uploader/index.html` in Chrome or Edge, press **Connect**,
    pick a folder and upload. Close Elektron Transfer first, which would hold the MIDI port.

@@ -45,19 +45,23 @@ every address the machine uses, with a comment on what was read where.
 | `0x40000400`… | the MAIN OS image (code and constant data), about 1.7 MB |
 | `0x409c9c80` + 7094 · n | the kits of the 96 patterns (section 6) |
 | `0x42308828` + 0x31c · t | the six voices (section 5) |
-| `0x42800000`–`0x46700000` | unused by the Cycles OS (the Model:Samples OS keeps its sample pool there). One-Shot loads its samples here: 63 MB |
-| `0x46700000`–`0x46800000` | One-Shot's payload: code and the moved machine tables from `0x46700000`, variables from `+0x36000` |
+| `0x43000000`… | the added machines' payload window (Modded-Cycles' `PAY_ALONE`): One-Shot's code and the moved machine tables from `0x43000000`, variables from `+0x36000` |
+| `0x43800000`–`0x46700000` | the sample pool: 47 MB of RAM the Cycles OS leaves unused (the Model:Samples OS keeps its own pool in `0x42800000`–`0x46800000`) |
 | `0x80000000`… | SRAM: among others the audio side's copies of the notes' parameters (section 5) and the kit it plays (section 6) |
 
-Modded-Cycles uses the same payload place next to Model-TG; Model-TG's own payload is why One-Shot
-cannot be combined with it (section 4).
+Up to 0.6 the payload sat at `0x46700000`, the window Modded-Cycles reserves next to Model-TG, and
+the pool filled everything below it. Since 0.7 the payload sits where MACRO and ACID put theirs,
+so that one combined build can hold several added machines in the same window, and the pool starts
+8 MB above it (`POOL` in `machine/build.py`, `POOL_BASE`/`POOL_LIMIT` in `pool.c`).
 
 ## 3. Adding a machine
 
 The Cycles OS knows six machines (KICK, SNARE, METAL, PERC, TONE, CHORD). Nothing in it is meant
 to grow, but the tables it reads are few and regular. Modded-Cycles found how to add one for its
-MACRO machine (`tools/gen_macro.py`, MIT); `machine/build.py` imports that machinery from a clone
-of Modded-Cycles and uses it unchanged:
+MACRO machine (`tools/gen_macro.py`, MIT) and later put the steps into one function for any list
+of added machines, `gen_macro.added_machine`, which MACRO and ACID use. Since 0.7 `machine/build.py`
+calls that registrar from a clone of Modded-Cycles with SAMPLE as the one machine of the list (up to
+0.6 it repeated the same steps itself, for one machine):
 
 - **Moved tables.** The table of machine names, the `update` and `render` tables, the table that
   maps a machine to its sound record layout, the parameter descriptors and the knob rows move into
@@ -68,14 +72,18 @@ of Modded-Cycles and uses it unchanged:
 - **Detours.** Short stubs teach the MACHINES page, the knob handling and the sound records about
   the new machine.
 - **Boot hook.** A sprite mask the OS no longer needs is redirected, and its bytes hold a stub that
-  copies the payload's parts from the end of the image to `0x46700000` at start-up; a jump at the
+  copies the payload's parts from the end of the image to the payload window (`0x43000000`) at start-up; a jump at the
   boot hook leads there.
 
 A parameter descriptor is `0x38` bytes: `+0x00` the machine it belongs to, `+0x08` minimum, `+0x0c`
 maximum, `+0x10` default (8.8 values), `+0x2c` long name, `+0x34` short name. The stock table has
 76 entries at `0x4010dce0`. SAMPLE adds five, modelled on SNARE's: 76 Start (0–120, default 0), 77
 Length (0–120, default 120), 78 and 79 unused, 80 Amp Decay (default 127). SAMPLE is machine 6 and
-borrows picture 4 (TONE's) for the MACHINES page; the OS has only six pictures.
+borrows picture 4 (TONE's) for the MACHINES page; the OS has only six pictures. In a combined build
+the registrar assigns the index and the descriptors from SAMPLE's place in the list; the build hands
+them to the compiler (`SAMPLE_MACHINE`, `DESC_START`), and the knobs' parameter objects are SNARE's
+for every added machine (the accessor detour of notes/18), which is why the Cutoff formatter asks
+whether the selected track plays SAMPLE before it writes anything (section 9).
 
 ## 4. What One-Shot changes in the OS
 
@@ -98,9 +106,13 @@ The three record hooks replace a function's first two instructions (`lea -12(sp)
 with a return into its own second half, and calls a C function after the stock work is done
 (`machine/hooks.S`). Model-TG and Modded-Cycles' track filter hook the same record functions, so
 One-Shot cannot be combined with either; Modded-Cycles' `sample-preview` needs Model-TG and plays
-sample files from the same browser. The build lists these as conflicts. Two optional writes of
-MACRO are left out: `voice_loop` (a shorter loop with the same values) and `usb_steady` (an even
-USB audio clock).
+sample files from the same browser. Since 0.7 the build does not list conflicts by hand: it compares
+SAMPLE's writes and RAM ranges with every tweak of the clone and declares a conflict where another
+tweak writes other bytes to the same address, or runs a payload in SAMPLE's window or pool (every
+machine-adding tweak, Model-TG, the track filter), plus `sample-preview` by name; the same whole
+write, a sprite mask freed by both, is not a conflict, as in Modded-Cycles' `check_overlaps.py`.
+Two optional writes of MACRO are left out: `voice_loop` (a shorter loop with the same values) and
+`usb_steady` (an even USB audio clock).
 
 ## 5. The audio side
 
@@ -518,10 +530,14 @@ From reading its MAIN OS; addresses here are the Model:Samples'.
 
 **Build.** `machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
 [--tool path/to/elektron-firmware-tool]` starts from your copy of the official file (checked by
-its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.5.syx`, a `.json` report and the
-tweak in Modded-Cycles' format (`build/sampler-tweak.json`). Every write is checked against the
+its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.7.syx`, a `.json` report and the
+tweak in Modded-Cycles' format (`build/sampler-tweak.json`). That tweak file is the machine as
+Modded-Cycles' own `tools/build.py` installs it: copied into its `tweaks/model-cycles_OS1.13/`
+folder as `27-sampler.json`, `python3 tools/build.py -i model-cycles_OS1.13.syx -t sampler` gives
+the same MAIN OS byte for byte, alone or with other mods. Every write is checked against the
 stock bytes; the result is read back (checksums, HMAC, MAIN OS), and with `--tool`
-elektron-firmware-tool checks it again. Built against Modded-Cycles commit `6a9742a`.
+elektron-firmware-tool checks it again. Built against Modded-Cycles `95b63b7` (release 1.55 with
+Control All Config); 0.6 was built against `6a9742a` and verified against `95b63b7`.
 
 **Tests.** You need a C compiler; for the target check the m68k-elf toolchain (Homebrew:
 `m68k-elf-gcc`, `m68k-elf-binutils`); for the upload page node.
@@ -606,6 +622,14 @@ pixels per OS pixel) and compare against the PBM pictures above.
   `make machine-test`, `make test`), then digiemu and a Model:Cycles (2026-10-20): the LFO shapes
   with an edge across the centre and on one side, the knob through the centre, off at 0, the
   ring-out.
+- **Machine 0.7** (SAMPLE through Modded-Cycles' registrar, 2026-10-21): host tests (`make test`,
+  `make filter-test`, `make machine-test`), `make target`, the build against Modded-Cycles `95b63b7`
+  with elektron-firmware-tool's check; the tweak file in a copy of Modded-Cycles: `check_overlaps.py`
+  without a finding, `registry.py` accepting it, `build.py -t sampler` giving the same MAIN OS, and a
+  build with fifteen other mods (arp, lfo-plus, chord-keys, control-all-config, trig-hold,
+  level-pan-values, multiline-browser, latching-mute, trig-preview, browser-scroll, tempo-max,
+  trigless-dim, midi-both, 6ch-usbup, boot-anim) going through. Then on a Model:Cycles (2026-10-21):
+  works.
 
 ## 16. The filter
 

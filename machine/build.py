@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
-"""SAMPLE 0.6: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
+"""SAMPLE 0.7: build a Model:Cycles OS 1.13 image with the sampler machine as its 7th machine.
 
 The machine plays samples from the +Drive once per trig, through the one-shot core (src/smp_core.c)
 and the bridge (machine/sampler.c). A sample is chosen for a track in the PRESET browser and saved
-with the sound; machine/pool.c loads what the sounds name into free memory (0x42800000..0x46700000).
-The machine is added to the OS the way Modded-Cycles adds its MACRO machine (tools/gen_macro.py,
-MIT): the tables of machines, descriptors, names and update/render move into a payload at
-0x46700000, which a boot hook in a freed sprite mask copies there at start-up; moveq bounds go up
-by one machine, and detours teach the MACHINES page, the encoder and the sound records the new
-machine. Five more writes lead into SAMPLE's own hooks (machine/hooks.S, pool.c): the browser's
-file open, the sound record save (2 versions) and load, and the screen's redraw. Two vtable entries
-lead the draw methods of the main screen and of the knob view through SAMPLE's view (machine/view.c),
-which shows a SAMPLE track's waveform with its start and end. This script
-imports the machinery from your clone of Modded-Cycles (it changes nothing there), compiles the
-machine with the m68k-elf toolchain and writes
+with the sound; machine/pool.c loads what the sounds name into free memory (the pool, POOL below).
+
+Since 0.7 the machine is registered through Modded-Cycles' own registrar for added machines,
+gen_macro.added_machine (MIT), the one MACRO and ACID use: it moves the tables of machines,
+descriptors, names and update/render into a payload at 0x43000000 (gs.PAY_ALONE), which a boot
+hook in a freed sprite mask copies there at start-up, raises the moveq bounds and assembles the
+detours that teach the MACHINES page, the encoder and the sound records the new machine. SAMPLE's
+code is linked at that payload's start, its variables above the moved tables, and the sample pool
+starts 8 MB above the payload window so that other machines (MACRO, ACID) can share the window in
+a combined build. Five more writes lead into SAMPLE's own hooks (machine/hooks.S, pool.c): the
+browser's file open, the sound record save (2 versions) and load, and the screen's redraw. Two
+vtable entries lead the draw methods of the main screen and of the knob view through SAMPLE's view
+(machine/view.c), which shows a SAMPLE track's waveform with its start and end.
+
+What this tweak cannot be installed with is computed, not listed by hand: every tweak of the clone
+that writes other bytes to the same addresses, or whose payload runs in SAMPLE's payload window or
+in its sample pool, is a conflict. This script imports the machinery from your clone of
+Modded-Cycles (it changes nothing there), compiles the machine with the m68k-elf toolchain and
+writes
 
     build/sampler-tweak.json                  the tweak, in Modded-Cycles' format
-    build/model-cycles_OS1.13-sampler-v0.6.syx
+    build/model-cycles_OS1.13-sampler-v0.7.syx
 
 It starts from your own copy of the official OS file (checked by its SHA-256). Modded-Cycles'
 build steps check every write against the stock bytes, refuse writes into free space the OS
@@ -36,12 +44,12 @@ import subprocess
 import sys
 import tempfile
 
-VERSION = "0.6"
+VERSION = "0.7"
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 BUILD = ROOT / "build"
 STOCK_SHA256 = "44fe586269631a0ca7da25a3383fc6733c314809505fc3cc52f1e0ed9800640c"   # model-cycles_OS1.13.syx
-MC_TESTED = "6a9742a"       # the Modded-Cycles commit this was built against (tools/gen_macro.py etc.)
+MC_TESTED = "95b63b7"       # the Modded-Cycles commit this was built against (gen_macro.added_machine etc.)
 BASE = 0x40000400
 
 # The machine: knobs COLOR, SHAPE, SWEEP, CONTOUR = (long name, short name, default[, min, max]);
@@ -50,15 +58,16 @@ BASE = 0x40000400
 MACHINE = dict(name="SAMPLE", image=4, decay=127,
                knobs=(("Start", "STRT", 0, 0, 120), ("Length", "LEN", 120, 0, 120), ("Cutoff", "FREQ", 64),
                       ("Reso", "RESO", 0)))
-FIRST_DESC = 76            # the descriptor of SAMPLE's first knob (COLOR = Start), after the OS's 76
+# The sample pool: RAM the Cycles OS leaves unused, from 8 MB above the added machines' payload window
+# (gs.PAY_ALONE = 0x43000000) to where Model-TG's payload would start. A build whose payload ends above
+# POOL[0] must move the pool (pool.c reads POOL_BASE / POOL_LIMIT).
+POOL = (0x43800000, 0x46700000)
 SOURCES = (ROOT / "src" / "smp_core.c", ROOT / "src" / "smp_coeffs.c", ROOT / "src" / "smp_filter.c",
            ROOT / "src" / "smp_filter_tab.c", ROOT / "src" / "smp_filter_cf.S", HERE / "sampler.c", HERE / "pool.c",
            HERE / "view.c", HERE / "hooks.S")
 CFLAGS = ["-std=c99", "-mcpu=54418", "-O2", "-ffreestanding", "-fno-builtin", "-fno-tree-loop-distribute-patterns",
           "-nostdlib", "-fno-pic", "-fno-common", "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra",
-          "-Werror", "-DSAMPLE_MACHINE=6", "-DDESC_START=%d" % FIRST_DESC]
-BSS_OFF = 0x36000           # variables after the moved tables, as MACRO
-PAY_SIZE = 0x100000         # the payload's place, 0x46700000..0x46800000; the samples' pool ends below it
+          "-Werror"]
 # SAMPLE's hooks: (address, stock bytes, "jsr" or "jmp", symbol). A jmp replaces the first 8 bytes of a
 # function (lea -12(sp),sp ; movem.l a2-a4,(sp)), which the hook runs itself (hooks.S).
 HOOKS = ((0x400a6602, "4eb9400a3052", "jsr", "smp_hook_open"),       # the browser opens a file
@@ -71,6 +80,10 @@ HOOKS = ((0x400a6602, "4eb9400a3052", "jsr", "smp_hook_open"),       # the brows
 # to its method, and SAMPLE's calls the stock one for anything else.
 VIEWS = ((0x400ffe30, 0x4001b22a, "smp_main_draw"),       # MainScreenView (vtable 0x400ffe20)
          (0x4010053c, 0x4001e40a, "smp_knob_draw"))       # the knob view (vtable 0x4010052c)
+# Tweaks that share the PRESET browser's file open with SAMPLE (they need Model-TG, which the byte check
+# already refuses); named here so that the reason stays visible.
+EXTRA_CONFLICTS = {"sample-preview", "sample-preview-st"}
+ORDER = 27                  # after MACRO (25) and ACID (26): a chain of added machines keeps its payloads apart
 LINK = """SECTIONS
 {{
   .text {code:#x} : {{ *(.text.sampler_update) *(.text.sampler_render) *(.text*) }}
@@ -97,24 +110,31 @@ def load_mc(path):
         print("note: Modded-Cycles is at %s, this was built against %s" % (head, MC_TESTED))
     sys.path[:0] = [str(tools), str(tools / "emu")]
     import gen_macro            # noqa: E402  (also brings gx, gs, g7, g8, sprites)
+    if not hasattr(gen_macro, "added_machine"):
+        sys.exit("%s: this Modded-Cycles has no gen_macro.added_machine (older than release 1.53); use %s or later"
+                 % (path, MC_TESTED))
     import build as mc_build    # noqa: E402
     import aplib_grow           # noqa: E402
-    return gen_macro, mc_build, aplib_grow
+    return gen_macro, mc_build, aplib_grow, head
 
 
-def compile_machine(gm, tmp, pay):
-    """Core, table, bridge, sample memory and hooks, linked at pay (code and data) and pay + BSS_OFF
-    (variables). Returns (bytes from pay to the end of the data, symbols, end of the variables)."""
+def compile_machine(gm, tmp, code_at, bss_at, code_end, machine_index, desc_start):
+    """Core, table, bridge, sample memory and hooks, linked at code_at (code and data) and bss_at
+    (variables); the code must end before code_end. machine_index is SAMPLE's index among the
+    machines and desc_start its first descriptor, both set by the registrar's layout. Returns
+    (bytes from code_at to the end of the data, symbols, end of the variables)."""
     gx, gs = gm.gx, gm.gs
     objs = []
-    cutoff_object = "-DCUTOFF_OBJECT=%d" % (gm.g7.SNARE_DESC + 2)   # SAMPLE's knobs share SNARE's objects
+    defs = ["-DSAMPLE_MACHINE=%d" % machine_index, "-DDESC_START=%d" % desc_start,
+            "-DCUTOFF_OBJECT=%d" % (gm.g7.SNARE_DESC + 2),   # added machines' knobs share SNARE's objects (notes/18)
+            "-DPOOL_BASE=%#xu" % POOL[0], "-DPOOL_LIMIT=%#xu" % POOL[1]]
     for src in SOURCES:
         o = tmp / (src.stem + ".o")
-        gx.run([gx.CROSS + "gcc", *CFLAGS, cutoff_object, "-I%s" % (ROOT / "src"), "-I%s" % HERE, "-c", str(src),
+        gx.run([gx.CROSS + "gcc", *CFLAGS, *defs, "-I%s" % (ROOT / "src"), "-I%s" % HERE, "-c", str(src),
                 "-o", str(o)])
         objs.append(o)
     ld, elf, out = tmp / "link.ld", tmp / "sampler.elf", tmp / "sampler.bin"
-    ld.write_text(LINK.format(code=pay, bss=pay + BSS_OFF))
+    ld.write_text(LINK.format(code=code_at, bss=bss_at))
     keep = [a for sym in [h[3] for h in HOOKS] + [v[2] for v in VIEWS] for a in ("-u", sym)]
     gx.run([gx.CROSS + "ld", "-T", str(ld), "--gc-sections", "--no-warn-rwx-segments", "-e", "sampler_update",
             "-u", "sampler_render", *keep, "-o", str(elf), *map(str, objs)])
@@ -133,198 +153,122 @@ def compile_machine(gm, tmp, pay):
         p_ = line.split()
         if len(p_) == 3:
             syms[p_[2]] = int(p_[0], 16)
-    if pay + len(blob) > gs.STUBS:
+    if code_at + len(blob) > code_end:
         sys.exit("code and tables too big: %d bytes" % len(blob))
-    bss = secs.get(".bss", (pay + BSS_OFF, 0))
-    if bss[0] != pay + BSS_OFF:
-        sys.exit("variables not at pay + 0x%x" % BSS_OFF)
-    if bss[0] + bss[1] > pay + PAY_SIZE:
-        sys.exit("variables end past 0x%x" % (pay + PAY_SIZE))
+    bss = secs.get(".bss", (bss_at, 0))
+    if bss[0] != bss_at:
+        sys.exit("variables not at %#x" % bss_at)
     return blob, syms, (bss[0] + bss[1] + 3) & ~3
 
 
-def build_tweak(gm, img):
-    """The tweak: gen_macro.build_tweak without Model-TG, with this machine in place of MACRO, at Model-TG's
-    payload address (the memory below it holds the samples), and with SAMPLE's hooks."""
-    gx, gs, g7, g8, sprites = gm.gx, gm.gs, gm.g7, gm.g8, gm.sprites
-    pay = gs.PAY_TG
-    if pay + PAY_SIZE != 0x46800000:
-        sys.exit("Modded-Cycles moved its payload for Model-TG: 0x%x" % pay)
+def own_writes(gm, img, syms):
+    """SAMPLE's hooks and view entries as writes, each checked against the stock bytes."""
+    g7 = gm.g7
+    writes = []
+    for va, old, op, sym in HOOKS:
+        old = bytes.fromhex(old)
+        new = (bytes.fromhex("4eb9") + g7.be32(syms[sym]) if op == "jsr"
+               else bytes.fromhex("4ef9") + g7.be32(syms[sym]) + bytes.fromhex("4e71"))
+        if len(new) != len(old):
+            sys.exit("hook at 0x%x: %d bytes for %d" % (va, len(new), len(old)))
+        if img[va - BASE:va - BASE + len(old)] != old:
+            sys.exit("0x%x: expected %s, found %s" % (va, old.hex(), img[va - BASE:va - BASE + len(old)].hex()))
+        writes.append({"off": va - BASE, "old": old.hex(), "new": new.hex()})
+    for va, method, sym in VIEWS:
+        if g7.refs32(img, method) != [va]:
+            sys.exit("references to 0x%x: %s" % (method, [hex(r) for r in g7.refs32(img, method)]))
+        writes.append({"off": va - BASE, "old": g7.be32(method).hex(), "new": g7.be32(syms[sym]).hex()})
+    return writes
+
+
+def computed_conflicts(mc_root, writes, ram):
+    """The ids of the clone's tweaks this one cannot be installed with: a write of other bytes to the
+    same address, or a payload that runs in one of our RAM ranges (the payload window, the pool).
+    The same whole write (a sprite mask freed by both) is not a conflict, as in check_overlaps.py."""
+    mine = {}
+    for w in writes:
+        new = bytes.fromhex(w["new"])
+        for i, b in enumerate(new):
+            mine[w["off"] + i] = b
+    ids = set()
+    for f in sorted((mc_root / "tweaks" / "model-cycles_OS1.13").glob("*.json")):
+        if f.name == "device.json":
+            continue
+        t = json.loads(f.read_text(encoding="utf-8"))
+        tid = t.get("id")
+        if not tid:
+            continue
+        clash = False
+        for w in t.get("writes", []):
+            new = bytes.fromhex(w["new"])
+            off = w["off"]
+            for i, b in enumerate(new):
+                if mine.get(off + i, b) != b:
+                    clash = True
+                    break
+            if clash:
+                break
+        ap = t.get("append")
+        if ap and not clash:
+            lo, hi = int(ap["dest"], 16), int(ap["dest"], 16) + ap["size"]
+            clash = any(lo < b and a < hi for a, b in ram)
+        if clash:
+            ids.add(tid)
+    return ids
+
+
+def build_tweak(gm, img, mc_root, mc_head):
+    """The tweak: SAMPLE registered through gen_macro.added_machine as the 7th machine, at the alone
+    payload window, with SAMPLE's own hooks and view entries, and the conflicts computed from the
+    clone's tweaks."""
+    gs, g7 = gm.gs, gm.g7
+    pay = gs.PAY_ALONE
     gs.set_base(pay)
-    nm, top, n = 7, 6, 1                        # machines: the 6 stock ones, then SAMPLE
-    cur = img
-    u32 = lambda va: struct.unpack_from(">I", cur, va - BASE)[0]
-    m = MACHINE
+    first, n = 6, 1                             # machines: the 6 stock ones, then SAMPLE
     with tempfile.TemporaryDirectory() as d:
         tmp = pathlib.Path(d)
-        blob, syms, bss_end = compile_machine(gm, tmp, pay)
-        names_at, upd_at, rnd_at, map_at = gs.DATA, gs.DATA + 4 * nm, gs.DATA + 8 * nm, gs.DATA + 16 * nm
-        stubs, ssyms = gm.assemble(tmp, "det", gs.detours_asm(n, [m["image"]], [FIRST_DESC], None), gs.STUBS)
-        if gs.STUBS + len(stubs) > gs.DATA:
-            sys.exit("detours too big")
-
-        # data: names, update/render tables, machine -> record, strings
-        strings = [m["name"]] + [k[i] for k in m["knobs"] for i in (0, 1)]
-        at, addr = map_at + ((nm + 3) & ~3), {}
-        for s_ in strings:
-            if s_ not in addr:
-                addr[s_] = at
-                at += len(s_) + 1
-        names = [u32(g7.NAMES + 4 * i) for i in range(6)] + [addr[m["name"]]]
-        upd = [u32(g7.UPDATE_TAB + 4 * i) for i in range(6)] + [syms["sampler_update"]]
-        rnd = [u32(g7.RENDER_TAB + 4 * i) for i in range(6)] + [syms["sampler_render"]]
-        data = bytearray()
-        for t in (names, upd, rnd, range(1, nm + 1)):
-            data += b"".join(g7.be32(x) for x in t)
-        data += cur[gs.MAP - BASE:gs.MAP - BASE + 6] + bytes(range(6, nm)) + bytes(((nm + 3) & ~3) - nm)
-        for s_ in addr:
-            data += s_.encode("ascii") + b"\0"
-        if gs.DATA + len(data) > gs.DESCN:
-            sys.exit("data too big")
-
-        # 5 descriptors, modelled on SNARE's: COLOR, SHAPE, SWEEP, CONTOUR, Amp Decay
-        new = bytearray()
-        for k, (long_, short, default, *rng) in enumerate(m["knobs"]):
-            e = bytearray(img[g7.DESC + (g7.SNARE_DESC + k) * g7.DSTRIDE - BASE:][:g7.DSTRIDE])
-            e[0x00:0x04] = g7.be32(6)
-            if rng:
-                e[0x08:0x0c], e[0x0c:0x10] = g7.be32(rng[0] << 8), g7.be32(rng[1] << 8)
-            e[0x10:0x14] = g7.be32(default << 8)
-            e[0x2c:0x30] = g7.be32(addr[long_])
-            e[0x34:0x38] = g7.be32(addr[short])
-            new += e
-        e = bytearray(img[g7.DESC + (g7.SNARE_DESC + 4) * g7.DSTRIDE - BASE:][:g7.DSTRIDE])
-        e[0x10:0x14] = g7.be32(m["decay"] << 8)
-        new += e
-
-        # writes into the OS, each checked against the stock bytes
-        writes = []
-
-        def w(va, old, new_):
-            if cur[va - BASE:va - BASE + len(old)] != old:
-                sys.exit("0x%x: expected %s, found %s" % (va, old.hex(), cur[va - BASE:va - BASE + len(old)].hex()))
-            writes.append({"off": va - BASE, "old": old.hex(), "new": new_.hex()})
-
-        def moveq(va, old, new_, reg_byte):
-            w(va, bytes([reg_byte, old]), bytes([reg_byte, new_]))
-
-        def jmp(va):
-            return bytes.fromhex("4ef9") + g7.be32(va)
-
-        writes.append(None)                     # the boot hook, written below (it carries the list of chunks)
-        red = sprites.redirect_write(gx.CAVE)
-        w(BASE + red["off"], bytes.fromhex(red["old"]), bytes.fromhex(red["new"]))
-        w(gx.HOOK, bytes.fromhex(gx.HOOK_OLD), jmp(gx.CAVE) + bytes.fromhex("4e71"))
-        moved = {g7.DESC: gs.DESCN, g7.DESC + 8: gs.DESCN + 8, g7.DESC + 0x20: gs.DESCN + 0x20, g7.ROWS: gs.ROWSN,
-                 g7.CCROWS: gs.CCROWSN, g7.NAMES: names_at, g7.UPDATE_TAB: upd_at, g7.RENDER_TAB: rnd_at,
-                 gs.MAP: map_at}
-        want = {g7.DESC: 34, g7.DESC + 8: 1, g7.DESC + 0x20: 2, g7.ROWS: 5, g7.CCROWS: 2, gs.MAP: 1,
-                g7.RENDER_TAB: 1}
-        for old, new_ in moved.items():
-            rs = g7.refs32(cur, old)
-            if len(rs) != want.get(old, 1):
-                sys.exit("references to 0x%x: %d" % (old, len(rs)))
-            for va in rs:
-                w(va, g7.be32(old), g7.be32(new_))
-        jumps = g7.JUMPS + g8.JUMPS8
-        for va in g7.BOUNDS:
-            if va in {j[0] for j in jumps}:
-                continue
-            b0, b1 = cur[va - BASE], cur[va - BASE + 1]
-            if b0 & 0xf1 != 0x70 or b1 not in (75, 76):
-                sys.exit("bound 0x%x" % va)
-            moveq(va, b1, b1 + 5 * n, b0)
-        for va, reg in ((0x400a7dba, 0x72), (0x400a7df4, 0x70), (0x4005a6a6, 0x72), (0x400147a4, 0x70),
-                        (0x400148aa, 0x72), (0x400148b2, 0x70), (0x400a25e0, 0x70)):
-            if cur[va - BASE] != reg or cur[va - BASE + 1] not in (5, 6):
-                sys.exit("bound 0x%x" % va)
-            moveq(va, cur[va - BASE + 1], top, reg)
-        moveq(0x4005a572, 5, 6, 0x72)
-        w(0x4005a2b8, bytes.fromhex("487800c0"), bytes.fromhex("4878") + (32 * nm).to_bytes(2, "big"))
-        moveq(0x400a26e8, cur[0x400a26e8 - BASE + 1], nm, 0x70)
-        for va in (0x4001b69c, 0x400a40a6, 0x400a4fb0):
-            moveq(va, 5, 1, 0x70)
-        for va, old, sym in jumps:
-            w(va, bytes.fromhex(old), jmp(ssyms[sym]))
-        for va, old, sym in g7.CALLS:
-            w(va, bytes.fromhex(old), bytes.fromhex("4eb9") + g7.be32(ssyms[sym]) + bytes.fromhex("4e71"))
-        for va, old, op, sym in HOOKS:
-            new_ = (bytes.fromhex("4eb9") + g7.be32(syms[sym]) if op == "jsr"
-                    else jmp(syms[sym]) + bytes.fromhex("4e71"))
-            if len(new_) != len(old) // 2:
-                sys.exit("hook at 0x%x: %d bytes for %d" % (va, len(new_), len(old) // 2))
-            w(va, bytes.fromhex(old), new_)
-        for va, method, sym in VIEWS:
-            if g7.refs32(cur, method) != [va]:
-                sys.exit("references to 0x%x: %s" % (method, [hex(r) for r in g7.refs32(cur, method)]))
-            w(va, g7.be32(method), g7.be32(syms[sym]))
-
-        # the payload: our code and data, the detours, the data block, the stock descriptors (copied from
-        # your file at build time) and the new ones
-        parts = [
-            {"dest": "%#x" % pay, "hex": blob.hex()},
-            {"dest": "%#x" % gs.STUBS, "hex": stubs.hex()},
-            {"dest": "%#x" % gs.DATA, "hex": bytes(data).hex()},
-            {"dest": "%#x" % gs.DESCN, "cycles": ["%#x" % g7.DESC, "%#x" % (g7.DESC + g7.NDESC * g7.DSTRIDE)]},
-            {"dest": "%#x" % (gs.DESCN + g7.NDESC * g7.DSTRIDE), "hex": bytes(new).hex()},
-        ]
-        lo_, hi_ = g7.DESC - BASE, g7.DESC - BASE + g7.NDESC * g7.DSTRIDE
-        final, orig = bytearray(cur[lo_:hi_]), img[lo_:hi_]
-        alg = g7.ALG_DESC * g7.DSTRIDE + 0x0c
-        if struct.unpack_from(">I", final, alg)[0] != 5 << 8:
-            sys.exit("maximum of the Algorithm parameter")
-        struct.pack_into(">I", final, alg, top << 8)
-        reloc = [["%#x" % (gs.DESCN + k), orig[k:k + 4].hex(), final[k:k + 4].hex()]
-                 for k in range(0, len(final), 4) if final[k:k + 4] != orig[k:k + 4]]
-        size = bss_end - pay
-        segs = gs.segments(parts, size)
-        at = BASE + gx.IMAGE_LEN
-        if at + sum(n_ for _, n_ in segs) > gs.END_LIMIT:
-            sys.exit("adding %d bytes would end the image past 0x%x" % (sum(n_ for _, n_ in segs), gs.END_LIMIT))
-        (tmp / "segs.inc").write_text("".join("\t.long\t%#x, %d\n" % (a, n_ // 4) for a, n_ in segs))
-        stub, _ = gm.assemble(tmp, "stub", gx.SRC / "stub.S", gx.CAVE, [
-            "-DPAYLOAD_SRC=%#x" % at, "-DPAYLOAD_DST=%#x" % pay, "-DPAYLOAD_LONGS=%d" % (size // 4), "-DPACK",
-            "-I%s" % tmp])
-    if len(stub) > sprites.zone(gx.CAVE)[1]:
-        sys.exit("boot hook too big for its place")
-    if cur[gx.CAVE - BASE:gx.CAVE - BASE + len(stub)] != b"\xff" * len(stub):
-        sys.exit("the boot hook's place is taken")
-    writes[0] = {"off": gx.CAVE - BASE, "old": "ff" * len(stub), "new": stub.hex()}
+        blob, syms, bss_end = compile_machine(gm, tmp, pay, pay + gm.BSS_OFF, gs.STUBS, first, 76)
+        if bss_end > POOL[0]:
+            sys.exit("the payload ends at %#x, inside the sample pool (%#x): move POOL" % (bss_end, POOL[0]))
+        machine = dict(MACHINE, update=syms["sampler_update"], render=syms["sampler_render"])
+        writes, append = gm.added_machine(img, None, [machine], tmp, [(pay, blob)], bss_end)
+    writes += own_writes(gm, img, syms)
     writes.sort(key=lambda x: x["off"])
     for a_, b_ in zip(writes, writes[1:]):
         if a_["off"] + len(a_["new"]) // 2 > b_["off"]:
             sys.exit("writes overlap at 0x%x" % (BASE + b_["off"]))
-
-    # Model-TG and Modded-Cycles' track filter hook the same sound record functions; sample preview needs
-    # Model-TG and plays sample files from the same browser
-    ids = gm.other_ids() | {"macro", "macro-tg", "model-tg", "model-tg-st", "track-filter", "sample-preview",
-                            "sample-preview-st"}
+    ram = [(pay, bss_end), POOL]
+    conflicts = computed_conflicts(mc_root, writes, ram) | EXTRA_CONFLICTS
+    conflicts.discard("sampler")
     tweak = {
         "id": "sampler",
-        "order": 26,
+        "order": ORDER,
         "name": "SAMPLE machine %s: one-shot sampler for samples on the +Drive" % VERSION,
         "description": [
-            "7th machine after the 6 stock ones. Plays a sample from the +Drive once per trig through the",
-            "one-shot core of Cycles One-Shot (6-tap polyphase at 96 kHz, then the stock decimator). A sample",
-            "is chosen for a SAMPLE track in the PRESET browser and saved with the sound; stereo files play",
-            "as mono, other rates at their pitch. COLOR = start, SHAPE = length, 0..120 each as on the",
-            "Model:Samples (it ends at start + length); DECAY, GATE and PUNCH: the stock amp chain set up",
-            "like TONE. On a SAMPLE track the main screen shows the sample's name and waveform, start and",
-            "end marked; turning COLOR or SHAPE moves the marks. Samples live in 0x42800000..0x46700000,",
-            "the payload above.",
-            "Machine mechanics from Modded-Cycles' MACRO (tools/gen_macro.py).",
+            "7th machine after the 6 stock ones, registered through gen_macro.added_machine like MACRO and ACID.",
+            "Plays a sample from the +Drive once per trig through the one-shot core of Cycles One-Shot (6-tap",
+            "polyphase at 96 kHz, then the stock decimator), the amp chain set up like TONE, then the Model:Samples'",
+            "filter. A sample is chosen for a SAMPLE track in the PRESET browser and saved with the sound; stereo",
+            "files play as mono, other rates at their pitch. COLOR = start, SHAPE = length, 0..120 each as on the",
+            "Model:Samples (it ends at start + length); SWEEP = cutoff, CONTOUR = resonance; DECAY, GATE and PUNCH:",
+            "the stock amp chain. On a SAMPLE track the main screen shows the sample's name and waveform, start and",
+            "end marked. Samples live in %#x..%#x (%d MB); the payload runs at %#x." % (POOL[0], POOL[1],
+                                                                                        (POOL[1] - POOL[0]) >> 20, pay),
+            "Conflicts computed from the clone's tweaks (Modded-Cycles %s): other bytes at the same address, or a"
+            % (mc_head or MC_TESTED),
+            "payload in SAMPLE's payload window or sample pool. Generated by machine/build.py of Cycles One-Shot.",
         ],
         "device": "Model:Cycles",
         "os": "1.13",
         "section": 3,
-        "conflicts": sorted(ids),
+        "conflicts": sorted(conflicts),
         "writes": writes,
-        "append": {"at": "%#x" % at, "dest": "%#x" % pay, "size": size, "parts": parts, "reloc": reloc,
-                   "pack": [["%#x" % a_, n_] for a_, n_ in segs]},
+        "append": append,
         "symbols": {k: "%#x" % syms[k] for k in ("sampler_update", "sampler_render") + tuple(h[3] for h in HOOKS)
                     + tuple(v[2] for v in VIEWS)},
     }
-    info = dict(code=len(blob), bss=bss_end - pay - BSS_OFF, image=sum(n_ for _, n_ in segs))
+    info = dict(code=len(blob), bss=bss_end - pay - gm.BSS_OFF, image=sum(n_ for _, n_ in append["pack"]),
+                pay=pay, bss_end=bss_end)
     return tweak, info
 
 
@@ -394,23 +338,27 @@ def main():
     raw = args.stock.read_bytes()
     if sha(raw) != STOCK_SHA256:
         sys.exit("%s is not the official Model:Cycles OS 1.13 file (SHA-256 %s...)" % (args.stock, STOCK_SHA256[:16]))
-    gm, mcb, aplib_grow = load_mc(args.modded_cycles)
+    gm, mcb, aplib_grow, mc_head = load_mc(args.modded_cycles)
     img = gm.g7.cycles_main(args.stock)
     if len(img) != gm.gx.IMAGE_LEN:
         sys.exit("not the MAIN OS 1.13")
 
-    tweak, info = build_tweak(gm, img)
+    mc_root = args.modded_cycles.resolve()
+    tweak, info = build_tweak(gm, img, mc_root, mc_head)
     BUILD.mkdir(exist_ok=True)
     (BUILD / "sampler-tweak.json").write_text(json.dumps(tweak, indent=1) + "\n", encoding="utf-8")
-    print("tweak: %d writes; code and tables %d bytes, variables %d bytes, %d bytes added to the image"
-          % (len(tweak["writes"]), info["code"], info["bss"], info["image"]))
+    print("tweak: %d writes; code and tables %d bytes, variables %d bytes, %d bytes added to the image; payload "
+          "%#x..%#x, pool %#x..%#x; %d conflicts computed"
+          % (len(tweak["writes"]), info["code"], info["bss"], info["image"], info["pay"], info["bss_end"],
+             POOL[0], POOL[1], len(tweak["conflicts"])))
     print("  sampler_update %s, sampler_render %s" % (tweak["symbols"]["sampler_update"],
                                                        tweak["symbols"]["sampler_render"]))
 
-    out, patched = build_syx(mcb, aplib_grow, args.modded_cycles.resolve(), raw, tweak)
+    out, patched = build_syx(mcb, aplib_grow, mc_root, raw, tweak)
     path = BUILD / ("model-cycles_OS1.13-sampler-v%s.syx" % VERSION)
     path.write_bytes(out)
     report = {"version": VERSION, "stock": {"file": args.stock.name, "sha256": STOCK_SHA256},
+              "modded_cycles": mc_head or MC_TESTED,
               "main_os": {"sha256": sha(patched), "bytes": len(patched), "end": "%#x" % (BASE + len(patched))},
               "output": {"file": path.name, "sha256": sha(out), "bytes": len(out)}, "tweak": info}
     path.with_suffix(".syx.json").write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
