@@ -7,12 +7,12 @@
 <style>
   :root {
     --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #dedbd4;
-    --accent: #2f6f62; --accent-text: #ffffff; --bad: #a3312a; --ok: #2f6f62;
+    --accent: #2f6f62; --accent-text: #ffffff; --bad: #a3312a; --ok: #2f6f62; --warn: #8a5a00;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #161615; --panel: #201f1d; --text: #ecebe7; --muted: #9b978f; --line: #34322e;
-      --accent: #5fb3a1; --accent-text: #0f1513; --bad: #e0786f; --ok: #6cc3b0;
+      --accent: #5fb3a1; --accent-text: #0f1513; --bad: #e0786f; --ok: #6cc3b0; --warn: #e3aa4d;
     }
   }
   * { box-sizing: border-box; }
@@ -53,6 +53,7 @@
   .info { color: var(--muted); font-size: 13px; white-space: nowrap; }
   .bad { color: var(--bad); }
   .ok { color: var(--ok); }
+  .warn { color: var(--warn); }
   #status { min-height: 1.4em; margin: 4px 2px 0; }
   .note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
   @media (max-width: 520px) { .row > * { flex: 1 1 auto; } }

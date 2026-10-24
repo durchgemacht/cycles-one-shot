@@ -486,7 +486,15 @@ over Web MIDI:
 - Closing hashes the file (section 7), after which the browser lists it and SAMPLE plays it.
 
 The page writes each audio file as a 48 kHz mono 16-bit sample in the format of section 7 and
-checks the size the Cycles reports afterwards. The Cycles stays silent while it writes, as with
+checks the size the Cycles reports afterwards. In `/Wavetables`, the folder model27's CHORD Tables
+reads (files of k × 256 samples, the first frame on SWEEP 0), it checks each file after the
+conversion, before anything is written:
+- `tableFrames`: the loader's rule, 1 to 32 frames of 256 samples (the page always writes mono, the
+  loader's other rule). A file that fails is not written: its row says why, the status line counts
+  it. A WAV at another rate than 48 kHz is resampled by the browser and usually fails here.
+- `startsWithSine`, the same test as model27's `tools/wavetable.py`: harmonic 1 of the first 256
+  samples in sine phase, DC and every other harmonic under a thousandth of it. A file that fails is
+  still written, with a warning on its row and in the status line. The Cycles stays silent while it writes, as with
 every file it writes. The protocol facts come from [ModdedTransfer](https://github.com/ktwzk/modded-transfer) (WTFPL), which
 follows Elektroid, and from Model-TG's table of the Cycles' file commands (MIT).
 

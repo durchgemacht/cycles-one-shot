@@ -43,7 +43,10 @@ from the Model:Samples: looping and reverse playback.
   OS's own browser title, and the waveform across the whole width. Lines mark where a trig starts
   and stops; they move while you turn Start and Length.
 - **An upload page.** `uploader/` puts audio files on the +Drive over USB from Chrome or Edge, as
-  samples SAMPLE plays. It needs no firmware change, so it works with the official OS as well.
+  samples SAMPLE plays. It needs no firmware change, so it works with the official OS as well. In the
+  folder `/Wavetables`, which model27's CHORD Tables plays as wavetables, it does not write a file
+  CHORD Tables cannot play (not 1 to 32 frames of 256 samples, as a 48 kHz WAV), and it warns about a
+  file whose first frame is not a sine: on such a table SWEEP 0 plays no sine.
 
 | Knob | SAMPLE |
 |---|---|

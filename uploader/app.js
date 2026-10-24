@@ -176,14 +176,23 @@
         render();
     }
 
-    /* Decoded by the browser at the Cycles' rate, its channels averaged, as the device's sample file. */
+    /* Decoded by the browser at the Cycles' rate, its channels averaged: the 16-bit frames. */
     async function convert(file) {
         var ctx = new OfflineAudioContext(1, 1, E.RATE), buf, ch = [], c;
 
         buf = await ctx.decodeAudioData(await file.arrayBuffer());
         for (c = 0; c < buf.numberOfChannels; c++)
             ch.push(buf.getChannelData(c));
-        return E.sampleFile(E.toInt16(E.mixDown(ch)), E.RATE);
+        return E.toInt16(E.mixDown(ch));
+    }
+
+    function unplayable(n) {
+        var e = new Error("CHORD Tables cannot play it: " + n + " samples are not 1 to " + E.TABLE_MAX +
+                          " frames of " + E.CYCLE + " (a 48 kHz WAV of k \u00d7 256 samples, as model27's" +
+                          " tools/wavetable.py makes it); not uploaded");
+
+        e.unplayable = true;
+        return e;
     }
 
     function progress(entry, text) {
@@ -192,7 +201,7 @@
     }
 
     async function upload(entry) {
-        var path = E.joinPath(state.path, entry.name), items, data, m, id, off, chunk, found;
+        var path = E.joinPath(state.path, entry.name), items, frames, data, m, id, off, chunk, found, warn = "";
 
         if (!entry.name)
             throw new Error("give it a name");
@@ -201,9 +210,18 @@
             throw new Error("something named " + entry.name + " is already in this folder");
         progress(entry, "converting");
         try {
-            data = await convert(entry.file);
+            frames = await convert(entry.file);
         } catch (e) {
             throw new Error("the browser cannot read this audio file");
+        }
+        data = E.sampleFile(frames, E.RATE);
+        /* CHORD Tables plays this folder: a file it cannot play is not written; a table whose first frame is no
+           sine is written with a warning, since SWEEP 0 then plays no sine */
+        if (state.path === E.WAVETABLES) {
+            if (!E.tableFrames(frames))
+                throw unplayable(frames.length);
+            if (!E.startsWithSine(frames))
+                warn = "its first frame is not a sine, so SWEEP 0 plays no sine with CHORD Tables";
         }
         if (data.length - 80 > POOL)
             throw new Error("too long for SAMPLE's memory (" + kb(data.length) + ")");
@@ -230,22 +248,30 @@
         if (found.size !== data.length)
             throw new Error("the Cycles has " + found.size + " bytes, " + data.length + " were sent");
         entry.done = true;
-        progress(entry, "done, " + kb(data.length));
+        entry.warn = warn;
+        progress(entry, "done, " + kb(data.length) + (warn ? "; warning: " + warn : ""));
     }
 
     async function uploadAll() {
-        var todo = state.files.filter(function (f) { return !f.done; }), ok = 0, i;
+        var todo = state.files.filter(function (f) { return !f.done; }), ok = 0, warned = 0, refused = 0, i;
 
         for (i = 0; i < todo.length; i++) {
             try {
                 show("Uploading " + todo[i].name + " (" + (i + 1) + " of " + todo.length + ")…");
                 await upload(todo[i]);
                 ok++;
+                if (todo[i].warn)
+                    warned++;
             } catch (e) {
+                if (e.unplayable)
+                    refused++;
                 progress(todo[i], "failed: " + e.message);
             }
         }
-        show(ok + " of " + todo.length + " uploaded to " + state.path + ".", ok === todo.length ? "ok" : "bad");
+        show(ok + " of " + todo.length + " uploaded to " + state.path + "." +
+             (refused ? " " + refused + " not uploaded: CHORD Tables cannot play it." : "") +
+             (warned ? " " + warned + " with a warning: see the list." : ""),
+             ok !== todo.length ? "bad" : warned ? "warn" : "ok");
     }
 
     /* ---- the page ------------------------------------------------------------------------ */
@@ -317,7 +343,7 @@
             input.disabled = state.busy || f.done;
             /* a typed name keeps its dots: cleanName drops only the dummy extension */
             input.oninput = function () { f.name = E.cleanName(input.value + ".x"); };
-            st.className = "info" + (/^failed/.test(f.state) ? " bad" : f.done ? " ok" : "");
+            st.className = "info" + (/^failed/.test(f.state) ? " bad" : f.warn ? " warn" : f.done ? " ok" : "");
             st.textContent = f.state || kb(f.file.size) + " " + (f.file.type || "");
             rm.textContent = "×";
             rm.title = "Remove from the list";

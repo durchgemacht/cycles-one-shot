@@ -232,6 +232,46 @@
         return out;
     }
 
+    /* CHORD Tables (model27, notes/66) plays the files of /Wavetables as wavetables: frames of 256 samples, the
+       first one on SWEEP 0, which is a sine on the stock CHORD. Whether a table's first frame is a sine: harmonic 1
+       in sine phase (0, rising), DC and every other harmonic under a thousandth of it (model27's
+       tools/wavetable.py, starts_with_sine). frames: 16-bit samples. */
+    var CYCLE = 256, TABLE_MAX = 32, WAVETABLES = "/Wavetables";
+
+    /* The frames of 256 a file holds as CHORD Tables' loader reads it (load_one in model27's
+       tools/machines/chordtables/chordtables.c): 1 to 32, or 0 when it cannot play the file at all. The page
+       always writes mono, the loader's other rule. */
+    function tableFrames(frames) {
+        var n = frames.length;
+
+        return n > 0 && n % CYCLE === 0 && n / CYCLE <= TABLE_MAX ? n / CYCLE : 0;
+    }
+
+    function startsWithSine(frames) {
+        var re = [], im = [], h, k, a, h1, rest = 0, dc = 0;
+
+        if (frames.length < CYCLE)
+            return false;
+        for (k = 0; k < CYCLE; k++)
+            dc += frames[k] / 32767;
+        for (h = 1; h < CYCLE / 2; h++) {
+            re[h] = 0;
+            im[h] = 0;
+            for (k = 0; k < CYCLE; k++) {
+                a = 2 * Math.PI * h * k / CYCLE;
+                re[h] += frames[k] / 32767 * Math.cos(a);
+                im[h] -= frames[k] / 32767 * Math.sin(a);
+            }
+            re[h] *= 2 / CYCLE;
+            im[h] *= 2 / CYCLE;
+            if (h > 1)
+                rest = Math.max(rest, Math.hypot(re[h], im[h]));
+        }
+        h1 = Math.hypot(re[1], im[1]);
+        return h1 > 0.5 && Math.abs(Math.atan2(im[1], re[1]) + Math.PI / 2) < 0.05 &&
+               Math.abs(dc) / CYCLE < 1e-3 * h1 && rest < 1e-3 * h1;
+    }
+
     exports.HEADER = HEADER;
     exports.TYPE = TYPE;
     exports.BLOCK = BLOCK;
@@ -258,4 +298,9 @@
     exports.mixDown = mixDown;
     exports.toInt16 = toInt16;
     exports.sampleFile = sampleFile;
+    exports.CYCLE = CYCLE;
+    exports.TABLE_MAX = TABLE_MAX;
+    exports.WAVETABLES = WAVETABLES;
+    exports.tableFrames = tableFrames;
+    exports.startsWithSine = startsWithSine;
 })(typeof module !== "undefined" && module.exports ? module.exports : (window.Elektron = {}));

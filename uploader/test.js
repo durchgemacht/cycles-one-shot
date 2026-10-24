@@ -115,6 +115,25 @@ check(E.cleanName("x".repeat(80) + ".wav").length === E.NAME_MAX, "names stop at
     check(len > 0 && !(len & 1) && len <= f.length - 64 && rate >= 4000 && rate <= 192000, "SAMPLE accepts the header");
 }
 
+/* a table's first frame, for CHORD Tables (model27 notes/66 §16): a sine in sine phase, or not */
+{
+    const frame = (f) => Int16Array.from({ length: E.CYCLE }, (_, k) => Math.round(32767 * f(2 * Math.PI * k / E.CYCLE)));
+    const sine = frame(Math.sin), table = Int16Array.from([...sine, ...frame(t => (t / Math.PI) - 1)]);
+    check(E.startsWithSine(sine) && E.startsWithSine(table), "a sine, and a table that starts with one, start with a sine");
+    const lsb = Int16Array.from(sine, (v, k) => v + (k % 3) - 1);
+    check(E.startsWithSine(lsb), "a sine one step off here and there (the browser's rounding) still is one");
+    check(!E.startsWithSine(frame(Math.cos)), "a cosine is not a sine in sine phase");
+    check(!E.startsWithSine(frame(t => 0.9 * Math.sin(t) + 0.1 * Math.sin(2 * t))), "a sine with harmonic 2 is not");
+    check(!E.startsWithSine(frame(t => (t / Math.PI) - 1)), "a saw is not");
+    check(!E.startsWithSine(frame(t => 0.5 * Math.sin(t) + 0.1)), "a sine with DC is not");
+    check(!E.startsWithSine(sine.slice(0, 200)), "fewer than 256 samples are not");
+    check(E.WAVETABLES === "/Wavetables", "the folder CHORD Tables reads");
+    const n = (len) => E.tableFrames(new Int16Array(len));
+    check(n(256) === 1 && n(512) === 2 && n(32 * 256) === 32, "1, 2 and 32 frames of 256: what CHORD Tables plays");
+    check(n(0) === 0 && n(300) === 0 && n(33 * 256) === 0 && n(48000) === 0 && n(255) === 0,
+          "nothing, 300, 33 frames, 48000 (a second of sound) and 255 samples: it cannot play them");
+}
+
 if (failures) {
     console.log(failures + " check(s) failed");
     process.exit(1);

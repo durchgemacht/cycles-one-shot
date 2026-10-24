@@ -110,10 +110,19 @@ const access = { inputs: new Map([["in1", input]]), outputs: new Map([["out1", o
 const tone = new Float32Array(48000);
 for (let i = 0; i < tone.length; i++)
     tone[i] = 0.5 * Math.sin(2 * Math.PI * 440 * i / 48000);
+/* a wavetable of two frames of 256, a sine then a saw: what model27's tools/wavetable.py makes */
+const table = Float32Array.from({ length: 512 }, (_, k) => (k < 256 ? 0.999 * Math.sin(2 * Math.PI * k / 256)
+                                                                  : (k - 256) / 128 - 1));
+const sawFirst = Float32Array.from([...table.slice(256), ...table.slice(0, 256)]);
 class OfflineAudioContext {
     constructor(ch, len, rate) { this.rate = rate; }
     async decodeAudioData(buf) {
-        if (new Uint8Array(buf)[0] !== 0x52)
+        const kind = new Uint8Array(buf)[0];
+        if (kind === 0x57)                                         /* "W": the wavetable, mono */
+            return { numberOfChannels: 1, sampleRate: this.rate, length: table.length, getChannelData: () => table };
+        if (kind === 0x58)                                         /* "X": the same frames, the saw first */
+            return { numberOfChannels: 1, sampleRate: this.rate, length: sawFirst.length, getChannelData: () => sawFirst };
+        if (kind !== 0x52)
             throw new Error("not audio");
         return { numberOfChannels: 2, sampleRate: this.rate, length: tone.length,
                  getChannelData: (c) => (c === 0 ? tone : new Float32Array(tone.length)) };
@@ -134,7 +143,8 @@ const sandbox = {
     Array, Math, Promise, Error, String, Object, Map
 };
 sandbox.window = sandbox;
-sandbox.window.prompt = () => "My Samples";
+let folderName = "My Samples";
+sandbox.window.prompt = () => folderName;
 vm.createContext(sandbox);
 for (const f of ["elektron.js", "app.js"])
     vm.runInContext(fs.readFileSync(path.join(__dirname, f), "utf8"), sandbox, { filename: f });
@@ -146,6 +156,7 @@ async function until(cond, what) {
     check(cond(), what);
 }
 const names = (list) => list.children.map(li => (li.children[0] ? li.children[0].textContent : li.textContent));
+const state_files = () => elements.files.children.filter(li => li.children.length === 3).length;
 
 (async () => {
     /* connect: ports picked, ping, root listed */
@@ -209,6 +220,44 @@ const names = (list) => list.children.map(li => (li.children[0] ? li.children[0]
     await until(() => /of 1 uploaded/.test(elements.status.textContent), "the protected upload ends");
     const last = elements.files.children[elements.files.children.length - 1].children[1].textContent;
     check(/Write protected/.test(last), "the refusal is shown: " + last);
+    check(!/warning/.test(elements.status.textContent), "no warning outside /Wavetables");
+
+    /* /Wavetables, which model27's CHORD Tables plays: a table whose first frame is no sine is told */
+    elements.folder.children[0].onclick();                         /* .. */
+    await until(() => elements.path.textContent === "/", "back at the root again");
+    folderName = "Wavetables";
+    elements.mkdir.onclick();
+    await until(() => elements.path.textContent === "/Wavetables", "/Wavetables is made and entered");
+    while (state_files() > 0)
+        elements.files.children[0].children[2].onclick();
+    elements.chooser.files = [file("01.wav", 0x57), file("02.wav", 0x58)];
+    elements.chooser.onchange();
+    elements.upload.onclick();
+    await until(() => /of 2 uploaded/.test(elements.status.textContent), "the two tables are uploaded");
+    const tableStates = elements.files.children.map(li => li.children[1].textContent);
+    check(/^done/.test(tableStates[0]) && !/warning/.test(tableStates[0]), "01, a sine first: done, no warning: " + tableStates[0]);
+    check(/^done.*warning: its first frame is not a sine/.test(tableStates[1]), "02, a saw first: done, with the warning: " + tableStates[1]);
+    check(elements.files.children[1].children[1].className === "info warn", "the warning in the warning colour");
+    check(/2 of 2 uploaded to \/Wavetables\. 1 with a warning/.test(elements.status.textContent) &&
+          elements.status.className === "warn", "the status line counts it: " + elements.status.textContent);
+    check(drive.has("/Wavetables/01") && drive.has("/Wavetables/02"), "both are on the drive: a warning, not a refusal");
+
+    /* a file CHORD Tables cannot play (a second of tone: 48000 samples, not frames of 256) is not written */
+    while (state_files() > 0)
+        elements.files.children[0].children[2].onclick();
+    const before = log.length;
+    elements.chooser.files = [file("03.wav", 0x52), file("04.wav", 0x57)];
+    elements.chooser.onchange();
+    elements.upload.onclick();
+    await until(() => /of 2 uploaded/.test(elements.status.textContent), "the refused upload ends");
+    const refusedStates = elements.files.children.map(li => li.children[1].textContent);
+    check(/^failed: CHORD Tables cannot play it: 48000 samples are not 1 to 32 frames of 256.*not uploaded$/.test(refusedStates[0]),
+          "03 is refused with the reason: " + refusedStates[0]);
+    check(elements.files.children[0].children[1].className === "info bad", "the refusal in the error colour");
+    check(!drive.has("/Wavetables/03") && drive.has("/Wavetables/04"), "03 is not on the drive, 04 is");
+    check(log.slice(before).filter(t => t === E.TYPE.OPEN_WRITE).length === 1, "only 04 was opened for writing");
+    check(/1 of 2 uploaded to \/Wavetables\. 1 not uploaded: CHORD Tables cannot play it\./.test(elements.status.textContent) &&
+          elements.status.className === "bad", "the status line says it: " + elements.status.textContent);
 
     if (failures) {
         console.log(failures + " check(s) failed");
