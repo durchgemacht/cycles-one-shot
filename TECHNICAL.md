@@ -661,7 +661,7 @@ pixels per OS pixel) and compare against the PBM pictures above.
 - **Machine 0.9** (two boxes along the top, the pattern's number and the sample's name, 2026-10-24):
   host tests (`make machine-test` with the boxes, their corners, the gap and the numbers A01, B04 and
   F16; `make test`; `make filter-test`), the build against Modded-Cycles `95b63b7` with
-  elektron-firmware-tool's check, then digiemu: passes.
+  elektron-firmware-tool's check, then digiemu: passes. On a Model:Cycles (2026-10-24).
 
 ## 16. The filter
 

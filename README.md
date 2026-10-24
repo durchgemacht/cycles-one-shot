@@ -61,8 +61,8 @@ from the Model:Samples: looping and reverse playback.
 ## Status
 
 - **Machine 0.9** (the bar above the waveform split in two boxes: the current pattern's number on
-  the left, the sample's name on the right): host-tested, and tested in the digiemu emulator
-  (2026-10-24); not yet on a device.
+  the left, the sample's name on the right): tested on a Model:Cycles (2026-10-24), and in the
+  digiemu emulator.
 - **Machine 0.8** (for builders that compose machines from compiled objects, like model27's: with
   `CM_SYMBOLS` defined, the machine index and the first descriptor are undefined symbols the builder
   resolves when it places the object, and each assembly file has a section of its own; without it, the
