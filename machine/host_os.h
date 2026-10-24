@@ -14,7 +14,7 @@ extern char host_pool[];
 extern unsigned long host_pool_size;
 extern uint32_t host_fs_mounted;
 extern void *host_fs_holder, *host_task;
-extern int host_value_shown, host_trig_held, host_track, host_main_draws, host_knob_draws;
+extern int host_value_shown, host_trig_held, host_track, host_pattern, host_main_draws, host_knob_draws;
 extern const void *host_font;
 
 void host_amp_env(char *v);
@@ -64,6 +64,7 @@ void host_draw_text(void *bmp, void *font, int32_t x, int32_t y, int32_t flags, 
 #define VALUE_SHOWN()       (host_value_shown != 0)
 #define TRIG_HELD()         (host_trig_held != 0)
 #define selected_track()    (host_track)
+#define current_pattern()   (host_pattern)
 #define FONT_MAKE(f, g)     ((void)(f), host_font = (g))
 #define FONT_DROP(f)        ((void)(f))
 extern const char host_font_small[], host_font_medium[];

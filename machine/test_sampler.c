@@ -40,7 +40,7 @@ _Alignas(8) char host_pool[1 << 20];
 unsigned long host_pool_size = sizeof host_pool;
 uint32_t host_fs_mounted = 1;
 void *host_fs_holder, *host_task = (void *)0x1000;
-int host_value_shown, host_trig_held, host_track, host_main_draws, host_knob_draws;
+int host_value_shown, host_trig_held, host_track, host_pattern, host_main_draws, host_knob_draws;
 const void *host_font;
 const char host_font_small[] = "small", host_font_medium[] = "medium";
 _Alignas(8) char host_ui_objects[76 * 100];
@@ -319,6 +319,7 @@ static void reset_all(void)
     host_value_shown = 0;
     host_trig_held = 0;
     host_track = 0;
+    host_pattern = 0;
     host_main_draws = host_knob_draws = 0;
     ntexts = 0;
     memset(host_ui_objects, 0, sizeof host_ui_objects);
@@ -898,22 +899,40 @@ static void test_view(void)
     memcpy(s + 4, "KICK 01", 8);
     tick_until(0xc101, SLOT_READY, 5);
     host_track = 2;
+    host_pattern = 19;
 
     set_knob(s, 42, 0);
     set_knob(s, 44, 120);
     smp_main_draw(0, &screen);
     CHECK(host_main_draws == 0, "the main screen of a SAMPLE track is ours");
-    CHECK(ntexts == 1 && !strcmp(texts[0].s, "KICK 01") && texts[0].font == FONT_SMALL && texts[0].x == NAME_X &&
-          texts[0].y == NAME_Y && texts[0].flags == 0, "its name, small, top left");
-    CHECK(pix(BAR_X + 1, BAR_Y) && pix(64, BAR_TOP) && pix(BAR_X + BAR_W - 2, BAR_TOP) && pix(BAR_X, BAR_Y + 1) &&
-          pix(BAR_X + BAR_W - 1, BAR_TOP - 1), "a lit bar on top");
-    CHECK(!pix(BAR_X, BAR_Y) && !pix(BAR_X + BAR_W - 1, BAR_Y) && !pix(BAR_X, BAR_TOP) &&
-          !pix(BAR_X + BAR_W - 1, BAR_TOP), "its corners dark");
+    CHECK(ntexts == 2 && !strcmp(texts[0].s, "B04") && !strcmp(texts[1].s, "KICK 01") && texts[0].font == FONT_SMALL &&
+          texts[1].font == FONT_SMALL && texts[0].x == PATTERN_X0 + 2 && texts[1].x == NAME_X0 + 2 &&
+          texts[0].y == NAME_Y && texts[1].y == NAME_Y && !texts[0].flags && !texts[1].flags,
+          "the pattern's number top left, the name next to it, both small");
+    CHECK(PATTERN_X0 == 0 && PATTERN_X1 == 20 && NAME_X0 == 23 && NAME_X1 == 127 && BAR_TOP == 63 && BAR_Y == 51,
+          "two boxes 13 rows high from the top: columns 0..20 and 23..127");
+    CHECK(pix(PATTERN_X0 + 1, BAR_Y) && pix(PATTERN_X1 - 1, BAR_TOP) && pix(PATTERN_X0, BAR_Y + 1) &&
+          pix(PATTERN_X1, BAR_TOP - 1) && pix(NAME_X0 + 1, BAR_Y) && pix(NAME_X1 - 1, BAR_TOP) &&
+          pix(NAME_X0, BAR_Y + 1) && pix(NAME_X1, BAR_TOP - 1) && pix(64, BAR_TOP), "both lit");
+    CHECK(!pix(PATTERN_X0, BAR_Y) && !pix(PATTERN_X1, BAR_Y) && !pix(PATTERN_X0, BAR_TOP) && !pix(PATTERN_X1, BAR_TOP) &&
+          !pix(NAME_X0, BAR_Y) && !pix(NAME_X1, BAR_Y) && !pix(NAME_X0, BAR_TOP) && !pix(NAME_X1, BAR_TOP),
+          "their corners dark");
     for (ok = 1, x = 0; x < 128; x++)
         for (y = BAR_Y; y < 64; y++)
-            ok &= !pix(x, y) || (x >= BAR_X && x < BAR_X + BAR_W && y <= BAR_TOP);
-    CHECK(ok && BAR_X == 0 && BAR_W == 128 && BAR_TOP == 63 && BAR_Y == 51, "the browser's bar: 128 x 13 from the top");
-    CHECK(!pix(NAME_X, NAME_Y) && pix(NAME_X - 1, NAME_Y), "the name in dark letters on it");
+            ok &= !pix(x, y) || ((x <= PATTERN_X1 || x >= NAME_X0) && y <= BAR_TOP);
+    CHECK(ok, "nothing lit between them");
+    CHECK(!pix(PATTERN_X0 + 2, NAME_Y) && pix(PATTERN_X0 + 1, NAME_Y) && !pix(NAME_X0 + 2, NAME_Y) &&
+          pix(NAME_X0 + 1, NAME_Y), "the texts in dark letters on them");
+    host_pattern = 0;
+    ntexts = 0;
+    smp_main_draw(0, &screen);
+    CHECK(!strcmp(texts[0].s, "A01"), "the first pattern: %s", texts[0].s);
+    host_pattern = 95;
+    ntexts = 0;
+    smp_main_draw(0, &screen);
+    CHECK(!strcmp(texts[0].s, "F16"), "the last pattern: %s", texts[0].s);
+    host_pattern = 19;
+    smp_main_draw(0, &screen);
     for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
         ok &= pix(0, y);
     CHECK(ok, "the start in column 0, a solid line");
@@ -1014,20 +1033,22 @@ static void test_view_states(void)
     s[38] = SAMPLE_MACHINE;
     memcpy(s + 4, "INIT", 5);
     smp_main_draw(0, &screen);
-    CHECK(ntexts == 1 && !strcmp(texts[0].s, "NO SAMPLE") && texts[0].font == FONT_MEDIUM && texts[0].x == 64 &&
-          texts[0].flags == 2, "no sample yet, so no name either: %d texts, %s", ntexts, ntexts ? texts[0].s : "-");
-    CHECK(pix(NAME_X, NAME_Y) && pix(64, BAR_TOP) && !pix(BAR_X, BAR_TOP), "the bar without a name");
+    CHECK(ntexts == 2 && !strcmp(texts[0].s, "A01") && !strcmp(texts[1].s, "NO SAMPLE") && texts[1].font == FONT_MEDIUM &&
+          texts[1].x == 64 && texts[1].flags == 2, "no sample yet, so no name either: %d texts, %s", ntexts,
+          ntexts > 1 ? texts[1].s : "-");
+    CHECK(pix(NAME_X0 + 2, NAME_Y) && pix(64, BAR_TOP) && !pix(NAME_X0, BAR_TOP) && !pix(PATTERN_X0 + 2, NAME_Y),
+          "the name's box empty, the pattern's number still there");
     preview("view-no-sample");
 
     make_sound(s, 130, 0xd101);
     memcpy(s + 4, "GONE", 5);
     ntexts = 0;
     smp_main_draw(0, &screen);
-    CHECK(ntexts == 2 && !strcmp(texts[1].s, "LOADING"), "named but not loaded: %s", ntexts > 1 ? texts[1].s : "-");
+    CHECK(ntexts == 3 && !strcmp(texts[2].s, "LOADING"), "named but not loaded: %s", ntexts > 2 ? texts[2].s : "-");
     tick_until(0xd101, SLOT_FAILED, 3);
     ntexts = 0;
     smp_main_draw(0, &screen);
-    CHECK(ntexts == 2 && !strcmp(texts[1].s, "NOT FOUND"), "not on the drive: %s", ntexts > 1 ? texts[1].s : "-");
+    CHECK(ntexts == 3 && !strcmp(texts[2].s, "NOT FOUND"), "not on the drive: %s", ntexts > 2 ? texts[2].s : "-");
     preview("view-not-found");
 }
 

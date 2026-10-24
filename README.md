@@ -39,9 +39,10 @@ from the Model:Samples: looping and reverse playback.
   that chain for all tracks. You hear the difference only with DIST above 0: the distortion
   then acts on the filtered signal. The laws, the structure and the measurements are in
   [TECHNICAL.md, section 16](TECHNICAL.md#16-the-filter).
-- **A waveform view.** On a SAMPLE track the main screen shows the sample's name in a bar like the
-  OS's own browser title, and the waveform across the whole width. Lines mark where a trig starts
-  and stops; they move while you turn Start and Length.
+- **A waveform view.** On a SAMPLE track the main screen shows two boxes along the top, in the look
+  of the OS's own browser title: the current pattern's number (A01 to F16) on the left, the sample's
+  name on the right. Below them the waveform runs across the whole width. Lines mark where a trig
+  starts and stops; they move while you turn Start and Length.
 - **An upload page.** `uploader/` puts audio files on the +Drive over USB from Chrome or Edge, as
   samples SAMPLE plays. It needs no firmware change, so it works with the official OS as well. In the
   folder `/Wavetables`, which model27's CHORD Tables plays as wavetables, it does not write a file
@@ -59,6 +60,9 @@ from the Model:Samples: looping and reverse playback.
 
 ## Status
 
+- **Machine 0.9** (the bar above the waveform split in two boxes: the current pattern's number on
+  the left, the sample's name on the right): host-tested, and tested in the digiemu emulator
+  (2026-10-24); not yet on a device.
 - **Machine 0.8** (for builders that compose machines from compiled objects, like model27's: with
   `CM_SYMBOLS` defined, the machine index and the first descriptor are undefined symbols the builder
   resolves when it places the object, and each assembly file has a section of its own; without it, the
@@ -99,7 +103,7 @@ from the Model:Samples: looping and reverse playback.
    python3 machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
    ```
 
-   This writes `build/model-cycles_OS1.13-sampler-v0.8.syx` and `build/sampler-tweak.json`, the
+   This writes `build/model-cycles_OS1.13-sampler-v0.9.syx` and `build/sampler-tweak.json`, the
    same machine as a tweak file Modded-Cycles' own `tools/build.py` accepts, and checks every change
    against the stock bytes.
 2. **Install it** over USB the way you install an official OS update. To go back, first set every

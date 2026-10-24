@@ -44,7 +44,7 @@ import subprocess
 import sys
 import tempfile
 
-VERSION = "0.8"
+VERSION = "0.9"
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 BUILD = ROOT / "build"

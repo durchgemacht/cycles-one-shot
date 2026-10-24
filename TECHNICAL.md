@@ -301,12 +301,25 @@ runs from another task (a screen copy), so the tick takes its own `tas` lock.
 - While a trig is held, the knob view shows the held steps' locked values: per step the lock
   (vtable +96), a sound lock (vtable +108), otherwise the base value (vtable +80).
 - The selected track: `0x40012412(0x4000eb90(project))`.
+- The current pattern, 0–95: `0x4006a96c(0x400cfd0e())`, which reads the sequencer's current
+  pattern (`0x40054828`) and clamps it. MainScreenView reads it so (`0x4001b276`) and writes it as
+  `"%c%02d"` with the bank `'A' + p / 16` and the number `p % 16 + 1` (`0x4001b44c`). While another
+  pattern is queued (`0x400124e8`), it alternates the two.
+- Patterns also have names (the menu's "Ptn Name"): the pattern's object of 732 bytes at the project
+  + 5192 + 732 · p, its part at +44, read by `0x4000ce94`: up to 16 characters, "No    Name" when
+  empty. SAMPLE's view does not show them.
 
 **SAMPLE's view** (`machine/view.c`) takes over the two draw entries. On a SAMPLE track it draws
 the main screen itself, and the knob view's screen while Start or Length is turned without a held
 trig; everything else goes to the stock method. It reads the sound's live COLOR and SHAPE, so the
 markers move while the knob turns. The waveform comes from 128 columns of minimum and maximum that
-`pool.c` gathers while the file loads.
+`pool.c` gathers while the file loads. Along the top it draws two boxes in the look of the
+browser's title (below): the current pattern's number in columns 0–20, then two dark columns, the
+sound's name in columns 23–127, each box lit with its corner pixels dark and its text in dark
+letters 2 pixels in. Every pattern number, A01 to F16, is 17 pixels wide in the small font (3
+characters of 5 and the 2 gaps), so the first box keeps its width; a name of 15 characters takes 89
+pixels at most of the second box's 101. Unlike MainScreenView it shows only the current pattern,
+not a queued one.
 
 ### Parameter objects and a value's text
 
@@ -373,12 +386,12 @@ The OS sets up 14 font objects at boot (`0x400e7ccc`–`0x400e7e1c`):
 | `0x40ea1504`, `0x40ea150c` | | 3 × 6, 5 × 6 | 0 | entries up to 83 and 45 pixels wide: probably graphics stored as characters |
 | `0x40ea1514` | `0x40146180` | 5 × 12 | 2 | not decoded |
 
-**The browser's title bar**, which SAMPLE's name bar copies: the browser's draw (`0x400a539c`)
+**The browser's title bar**, whose look SAMPLE's two boxes copy: the browser's draw (`0x400a539c`)
 clears the screen, draws its title with the small font at (2, 53), flags 0, then calls
 `0x40070efc(bmp, 0, 63, 127, 51, −1)`. The result is a lit bar 128 × 13 along the top with its
-corner pixels dark and the title in dark letters. SAMPLE's view draws the same (text lit, rows
-51–63 inverted, corners dark again); against a digiemu screenshot of the browser all 1664 pixels
-match.
+corner pixels dark and the title in dark letters. SAMPLE's view draws each box the same way (text
+lit, its part of rows 51–63 inverted, its corners dark again); up to 0.8 it drew one bar across the
+whole width, and against a digiemu screenshot of the browser all 1664 pixels matched.
 
 ## 10. The sound core
 
@@ -541,7 +554,7 @@ From reading its MAIN OS; addresses here are the Model:Samples'.
 
 **Build.** `machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
 [--tool path/to/elektron-firmware-tool]` starts from your copy of the official file (checked by
-its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.8.syx`, a `.json` report and the
+its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.9.syx`, a `.json` report and the
 tweak in Modded-Cycles' format (`build/sampler-tweak.json`). That tweak file is the machine as
 Modded-Cycles' own `tools/build.py` installs it: copied into its `tweaks/model-cycles_OS1.13/`
 folder as `27-sampler.json`, `python3 tools/build.py -i model-cycles_OS1.13.syx -t sampler` gives
@@ -645,6 +658,10 @@ pixels per OS pixel) and compare against the PBM pictures above.
   level-pan-values, multiline-browser, latching-mute, trig-preview, browser-scroll, tempo-max,
   trigless-dim, midi-both, 6ch-usbup, boot-anim) going through. Then on a Model:Cycles (2026-10-21):
   works.
+- **Machine 0.9** (two boxes along the top, the pattern's number and the sample's name, 2026-10-24):
+  host tests (`make machine-test` with the boxes, their corners, the gap and the numbers A01, B04 and
+  F16; `make test`; `make filter-test`), the build against Modded-Cycles `95b63b7` with
+  elektron-firmware-tool's check, then digiemu: passes.
 
 ## 16. The filter
 
