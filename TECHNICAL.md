@@ -308,18 +308,32 @@ runs from another task (a screen copy), so the tick takes its own `tas` lock.
 - Patterns also have names (the menu's "Ptn Name"): the pattern's object of 732 bytes at the project
   + 5192 + 732 · p, its part at +44, read by `0x4000ce94`: up to 16 characters, "No    Name" when
   empty. SAMPLE's view does not show them.
+- A track's level, 0–127, for MainScreenView's level bar (`0x4001b774`): the byte
+  `0x40009c5a(project + 116, t)` returns (it clamps t to 0–5 and reads a byte of the object
+  returned by entry +52 of that part's vtable, at +10 + 2t), sign-extended. MainScreenView draws
+  it from a set of sprites: none at 0, otherwise `1 + (level − 1) · (n − 2) / 126`. It is the only
+  caller. MainScreenView is drawn again when the level changes, so a turn of LEVEL moves the bar.
 
 **SAMPLE's view** (`machine/view.c`) takes over the two draw entries. On a SAMPLE track it draws
 the main screen itself, and the knob view's screen while Start or Length is turned without a held
 trig; everything else goes to the stock method. It reads the sound's live COLOR and SHAPE, so the
-markers move while the knob turns. The waveform comes from 128 columns of minimum and maximum that
-`pool.c` gathers while the file loads. Along the top it draws two boxes in the look of the
-browser's title (below): the current pattern's number in columns 0–20, then two dark columns, the
-sound's name in columns 23–127, each box lit with its corner pixels dark and its text in dark
-letters 2 pixels in. Every pattern number, A01 to F16, is 17 pixels wide in the small font (3
-characters of 5 and the 2 gaps), so the first box keeps its width; a name of 15 characters takes 89
-pixels at most of the second box's 101. Unlike MainScreenView it shows only the current pattern,
-not a queued one.
+markers move while the knob turns.
+
+- **The column**, 21 pixels wide (columns 0–20) and as high as the screen, after the maintainer's
+  drawing, lit marks on the dark screen: at the top a lit box (rows 51–63, its corner pixels dark)
+  with the current pattern's number in dark; below it an outline (rows 29–48) with TRAK and the
+  selected track's number, both lit; at the bottom the level: a frame (columns 6–14, rows 0–26)
+  with four ticks on each side (rows 1, 9, 17, 25) and a bar (columns 8–12) that grows from row 2 by
+  `1 + (level − 1) · 22 / 126` rows, none at 0, all 23 at 127, as MainScreenView's rule. Its letters
+  are the view's own, not the OS's: digits and A–F of 5 × 7 pixels in the shapes of the classic
+  character LCD (1 is 3 pixels wide), 1 pixel apart and centred, and TRAK of 3 × 5. Unlike
+  MainScreenView it shows only the current pattern, not a queued one.
+- **The name's box**, 2 dark columns to the right (columns 23–127, rows 51–63), in the look of the
+  browser's title (below): lit, its corner pixels dark, the sound's name in dark letters 2 pixels
+  in; a name of 15 characters takes 89 pixels at most of its 101.
+- **The waveform**, under the name's box from column 23: 105 columns (`SMP_COLUMNS` in
+  `machine/pool.h`) of minimum and maximum that `pool.c` gathers while the file loads.
+  NO SAMPLE, LOADING and NOT FOUND stand centred over it.
 
 ### Parameter objects and a value's text
 
@@ -386,12 +400,12 @@ The OS sets up 14 font objects at boot (`0x400e7ccc`–`0x400e7e1c`):
 | `0x40ea1504`, `0x40ea150c` | | 3 × 6, 5 × 6 | 0 | entries up to 83 and 45 pixels wide: probably graphics stored as characters |
 | `0x40ea1514` | `0x40146180` | 5 × 12 | 2 | not decoded |
 
-**The browser's title bar**, whose look SAMPLE's two boxes copy: the browser's draw (`0x400a539c`)
+**The browser's title bar**, whose look SAMPLE's name box copies: the browser's draw (`0x400a539c`)
 clears the screen, draws its title with the small font at (2, 53), flags 0, then calls
 `0x40070efc(bmp, 0, 63, 127, 51, −1)`. The result is a lit bar 128 × 13 along the top with its
-corner pixels dark and the title in dark letters. SAMPLE's view draws each box the same way (text
-lit, its part of rows 51–63 inverted, its corners dark again); up to 0.8 it drew one bar across the
-whole width, and against a digiemu screenshot of the browser all 1664 pixels matched.
+corner pixels dark and the title in dark letters. SAMPLE's view draws its name box the same way
+(text lit, its part of rows 51–63 inverted, its corners dark again); up to 0.8 it drew one bar
+across the whole width, and against a digiemu screenshot of the browser all 1664 pixels matched.
 
 ## 10. The sound core
 
@@ -554,7 +568,7 @@ From reading its MAIN OS; addresses here are the Model:Samples'.
 
 **Build.** `machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
 [--tool path/to/elektron-firmware-tool]` starts from your copy of the official file (checked by
-its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.9.syx`, a `.json` report and the
+its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.10.syx`, a `.json` report and the
 tweak in Modded-Cycles' format (`build/sampler-tweak.json`). That tweak file is the machine as
 Modded-Cycles' own `tools/build.py` installs it: copied into its `tweaks/model-cycles_OS1.13/`
 folder as `27-sampler.json`, `python3 tools/build.py -i model-cycles_OS1.13.syx -t sampler` gives
@@ -662,6 +676,12 @@ pixels per OS pixel) and compare against the PBM pictures above.
   host tests (`make machine-test` with the boxes, their corners, the gap and the numbers A01, B04 and
   F16; `make test`; `make filter-test`), the build against Modded-Cycles `95b63b7` with
   elektron-firmware-tool's check, then digiemu: passes. On a Model:Cycles (2026-10-24).
+- **Machine 0.10** (the column on the left with the pattern's number, the track's number and its
+  level, 2026-10-25): host tests (`make machine-test` with the column against the maintainer's
+  drawing pixel for pixel, the level's bar at 0, 1, 64 and 127, track 1, A01 and F16, the waveform
+  from column 23; also under ASan and UBSan; `make test`; `make filter-test`), the build against
+  Modded-Cycles `95b63b7` with elektron-firmware-tool's check, then digiemu and a Model:Cycles
+  (2026-10-25), with the same image byte for byte.
 
 ## 16. The filter
 

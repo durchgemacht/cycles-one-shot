@@ -40,7 +40,7 @@ _Alignas(8) char host_pool[1 << 20];
 unsigned long host_pool_size = sizeof host_pool;
 uint32_t host_fs_mounted = 1;
 void *host_fs_holder, *host_task = (void *)0x1000;
-int host_value_shown, host_trig_held, host_track, host_pattern, host_main_draws, host_knob_draws;
+int host_value_shown, host_trig_held, host_track, host_pattern, host_level, host_main_draws, host_knob_draws;
 const void *host_font;
 const char host_font_small[] = "small", host_font_medium[] = "medium";
 _Alignas(8) char host_ui_objects[76 * 100];
@@ -889,7 +889,7 @@ static void test_view(void)
 {
     char *s, view[0x240];
     int32_t p;
-    int x, y, ok, any, below, pairs;
+    int x, y, c, ok, any, below, pairs;
 
     reset_all();
     hit_frames = 48000;
@@ -900,43 +900,28 @@ static void test_view(void)
     tick_until(0xc101, SLOT_READY, 5);
     host_track = 2;
     host_pattern = 19;
+    host_level = 100;
 
     set_knob(s, 42, 0);
     set_knob(s, 44, 120);
     smp_main_draw(0, &screen);
     CHECK(host_main_draws == 0, "the main screen of a SAMPLE track is ours");
-    CHECK(ntexts == 2 && !strcmp(texts[0].s, "B04") && !strcmp(texts[1].s, "KICK 01") && texts[0].font == FONT_SMALL &&
-          texts[1].font == FONT_SMALL && texts[0].x == PATTERN_X0 + 2 && texts[1].x == NAME_X0 + 2 &&
-          texts[0].y == NAME_Y && texts[1].y == NAME_Y && !texts[0].flags && !texts[1].flags,
-          "the pattern's number top left, the name next to it, both small");
-    CHECK(PATTERN_X0 == 0 && PATTERN_X1 == 20 && NAME_X0 == 23 && NAME_X1 == 127 && BAR_TOP == 63 && BAR_Y == 51,
-          "two boxes 13 rows high from the top: columns 0..20 and 23..127");
-    CHECK(pix(PATTERN_X0 + 1, BAR_Y) && pix(PATTERN_X1 - 1, BAR_TOP) && pix(PATTERN_X0, BAR_Y + 1) &&
-          pix(PATTERN_X1, BAR_TOP - 1) && pix(NAME_X0 + 1, BAR_Y) && pix(NAME_X1 - 1, BAR_TOP) &&
-          pix(NAME_X0, BAR_Y + 1) && pix(NAME_X1, BAR_TOP - 1) && pix(64, BAR_TOP), "both lit");
-    CHECK(!pix(PATTERN_X0, BAR_Y) && !pix(PATTERN_X1, BAR_Y) && !pix(PATTERN_X0, BAR_TOP) && !pix(PATTERN_X1, BAR_TOP) &&
-          !pix(NAME_X0, BAR_Y) && !pix(NAME_X1, BAR_Y) && !pix(NAME_X0, BAR_TOP) && !pix(NAME_X1, BAR_TOP),
-          "their corners dark");
-    for (ok = 1, x = 0; x < 128; x++)
-        for (y = BAR_Y; y < 64; y++)
-            ok &= !pix(x, y) || ((x <= PATTERN_X1 || x >= NAME_X0) && y <= BAR_TOP);
-    CHECK(ok, "nothing lit between them");
-    CHECK(!pix(PATTERN_X0 + 2, NAME_Y) && pix(PATTERN_X0 + 1, NAME_Y) && !pix(NAME_X0 + 2, NAME_Y) &&
-          pix(NAME_X0 + 1, NAME_Y), "the texts in dark letters on them");
-    host_pattern = 0;
-    ntexts = 0;
-    smp_main_draw(0, &screen);
-    CHECK(!strcmp(texts[0].s, "A01"), "the first pattern: %s", texts[0].s);
-    host_pattern = 95;
-    ntexts = 0;
-    smp_main_draw(0, &screen);
-    CHECK(!strcmp(texts[0].s, "F16"), "the last pattern: %s", texts[0].s);
-    host_pattern = 19;
-    smp_main_draw(0, &screen);
+    CHECK(ntexts == 1 && !strcmp(texts[0].s, "KICK 01") && texts[0].font == FONT_SMALL && texts[0].x == NAME_X0 + 2 &&
+          texts[0].y == NAME_Y && !texts[0].flags, "the name, small, right of the column");
+    CHECK(COL_X0 == 0 && COL_X1 == 20 && NAME_X0 == 23 && NAME_X1 == 127 && BAR_TOP == 63 && BAR_Y == 51 &&
+          WAVE_X0 == 23 && WAVE_X0 + SMP_COLUMNS == 128, "the column 0..20, the name's box and the waveform 23..127");
+    CHECK(pix(NAME_X0 + 1, BAR_Y) && pix(NAME_X1 - 1, BAR_TOP) && pix(NAME_X0, BAR_Y + 1) && pix(NAME_X1, BAR_TOP - 1) &&
+          pix(64, BAR_TOP) && !pix(NAME_X0, BAR_Y) && !pix(NAME_X1, BAR_Y) && !pix(NAME_X0, BAR_TOP) &&
+          !pix(NAME_X1, BAR_TOP), "the name's box lit, its corners dark");
+    for (ok = 1, x = COL_X1 + 1; x < NAME_X0; x++)
+        for (y = 0; y < 64; y++)
+            ok &= !pix(x, y);
+    CHECK(ok, "2 dark columns between the column and the rest");
+    CHECK(!pix(NAME_X0 + 2, NAME_Y) && pix(NAME_X0 + 1, NAME_Y), "the name in dark letters");
     for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
-        ok &= pix(0, y);
-    CHECK(ok, "the start in column 0, a solid line");
-    for (any = 0, below = 0, x = 1; x < 127; x++) {
+        ok &= pix(WAVE_X0, y);
+    CHECK(ok, "the start in the waveform's first column, a solid line");
+    for (any = 0, below = 0, x = WAVE_X0 + 1; x < 127; x++) {
         any |= pix(x, WAVE_MID + WAVE_HALF) || pix(x, WAVE_MID - WAVE_HALF);
         below |= pix(x, WAVE_MID - WAVE_HALF - 1);
     }
@@ -944,38 +929,39 @@ static void test_view(void)
     for (ok = 1, x = 0; x < 128; x++)
         for (y = WAVE_MID + WAVE_HALF + 1; y < BAR_Y; y++)
             ok &= !pix(x, y);
-    CHECK(ok && BAR_Y - (WAVE_MID + WAVE_HALF + 1) == 1, "a free row between the waveform and the bar");
+    CHECK(ok && BAR_Y - (WAVE_MID + WAVE_HALF + 1) == 1, "a free row under the boxes, the column's too");
     preview("view-full");
 
-    /* Start 30, Length 45 of 120: columns 32 to 79 play (75 / 120 * 128 = 80) */
+    /* Start 30, Length 45 of 120 in 105 columns: 26 to 65 play (30 / 120 * 105 = 26.25, 75 / 120 * 105 = 65.6) */
     set_knob(s, 42, 30);
     set_knob(s, 44, 45);
     smp_main_draw(0, &screen);
     for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
-        ok &= pix(32, y) && (y & 1 || pix(79, y));
-    CHECK(ok, "a solid line at 32, a dotted one at 79");
-    for (pairs = 0, any = 0, x = 1; x < 31; x++)
+        ok &= pix(WAVE_X0 + 26, y) && (y & 1 || pix(WAVE_X0 + 65, y));
+    CHECK(ok, "a solid line at 26, a dotted one at 65");
+    for (pairs = 0, any = 0, x = WAVE_X0 + 1; x < WAVE_X0 + 25; x++)
         for (y = 1; y < WAVE_MID + WAVE_HALF; y++) {
             pairs += pix(x, y) && (pix(x + 1, y) || pix(x, y + 1) || pix(x + 1, y + 1) || pix(x - 1, y + 1));
             any += pix(x, y);
         }
-    for (ok = 1, x = 1; x < 31; x++)
-        ok &= pix(x, WAVE_MID) == !(x & 1) && !pix(x, WAVE_MID + 1) && !pix(x, WAVE_MID - 1) &&
-              pix(x, WAVE_MID + 2) == (x & 1) && pix(x, WAVE_MID - 2) == (x & 1);
+    for (ok = 1, c = 1; c < 25; c++)
+        ok &= pix(WAVE_X0 + c, WAVE_MID) == !(c & 1) && !pix(WAVE_X0 + c, WAVE_MID + 1) &&
+              !pix(WAVE_X0 + c, WAVE_MID - 1) && pix(WAVE_X0 + c, WAVE_MID + 2) == (c & 1) &&
+              pix(WAVE_X0 + c, WAVE_MID - 2) == (c & 1);
     CHECK(pairs == 0 && any > 0 && ok, "before the start a quarter of the pixels, staggered row by row, the zero line dotted");
     for (pairs = 0, y = 0; y < WAVE_MID + WAVE_HALF; y++)
-        pairs += pix(50, y) && pix(50, y + 1);
+        pairs += pix(WAVE_X0 + 40, y) && pix(WAVE_X0 + 40, y + 1);
     CHECK(pairs > 0, "the played part in full");
     preview("view-start-length");
 
-    /* Start 60: the same 48 columns, 64 to 111 */
+    /* Start 60: the same length, 52 to 91 */
     set_knob(s, 42, 60);
     smp_main_draw(0, &screen);
     for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
-        ok &= pix(64, y) && (y & 1 || pix(111, y));
-    CHECK(ok, "moving Start keeps the length: a solid line at 64, a dotted one at 111");
+        ok &= pix(WAVE_X0 + 52, y) && (y & 1 || pix(WAVE_X0 + 91, y));
+    CHECK(ok, "moving Start keeps the length: a solid line at 52, a dotted one at 91");
     for (pairs = 0, y = 0; y < WAVE_MID + WAVE_HALF; y++)
-        pairs += pix(40, y) && pix(40, y + 1);
+        pairs += pix(WAVE_X0 + 40, y) && pix(WAVE_X0 + 40, y + 1);
     CHECK(pairs == 0, "column 40 is before the start now");
 
     /* Start 120: the start at the very end, nothing plays */
@@ -983,7 +969,7 @@ static void test_view(void)
     smp_main_draw(0, &screen);
     for (ok = 1, y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
         ok &= pix(127, y);
-    for (pairs = 0, x = 0; x < 127; x++)
+    for (pairs = 0, x = WAVE_X0; x < 127; x++)
         for (y = 0; y < WAVE_MID + WAVE_HALF; y++)
             pairs += pix(x, y) && pix(x, y + 1);
     CHECK(ok && pairs == 0, "Start 120: the line at the last column, nothing in full");
@@ -1033,23 +1019,116 @@ static void test_view_states(void)
     s[38] = SAMPLE_MACHINE;
     memcpy(s + 4, "INIT", 5);
     smp_main_draw(0, &screen);
-    CHECK(ntexts == 2 && !strcmp(texts[0].s, "A01") && !strcmp(texts[1].s, "NO SAMPLE") && texts[1].font == FONT_MEDIUM &&
-          texts[1].x == 64 && texts[1].flags == 2, "no sample yet, so no name either: %d texts, %s", ntexts,
-          ntexts > 1 ? texts[1].s : "-");
-    CHECK(pix(NAME_X0 + 2, NAME_Y) && pix(64, BAR_TOP) && !pix(NAME_X0, BAR_TOP) && !pix(PATTERN_X0 + 2, NAME_Y),
-          "the name's box empty, the pattern's number still there");
+    CHECK(ntexts == 1 && !strcmp(texts[0].s, "NO SAMPLE") && texts[0].font == FONT_MEDIUM && texts[0].x == TEXT_X &&
+          TEXT_X == 75 && texts[0].flags == 2, "no sample yet, so no name either, the message over the waveform: %d texts, %s",
+          ntexts, ntexts ? texts[0].s : "-");
+    CHECK(pix(NAME_X0 + 2, NAME_Y) && pix(64, BAR_TOP) && !pix(NAME_X0, BAR_TOP) && pix(3, 60) && !pix(4, 60),
+          "the name's box empty, the column still there (A01: the A's top in dark)");
     preview("view-no-sample");
 
     make_sound(s, 130, 0xd101);
     memcpy(s + 4, "GONE", 5);
     ntexts = 0;
     smp_main_draw(0, &screen);
-    CHECK(ntexts == 3 && !strcmp(texts[2].s, "LOADING"), "named but not loaded: %s", ntexts > 2 ? texts[2].s : "-");
+    CHECK(ntexts == 2 && !strcmp(texts[1].s, "LOADING"), "named but not loaded: %s", ntexts > 1 ? texts[1].s : "-");
     tick_until(0xd101, SLOT_FAILED, 3);
     ntexts = 0;
     smp_main_draw(0, &screen);
-    CHECK(ntexts == 3 && !strcmp(texts[2].s, "NOT FOUND"), "not on the drive: %s", ntexts > 2 ? texts[2].s : "-");
+    CHECK(ntexts == 2 && !strcmp(texts[1].s, "NOT FOUND"), "not on the drive: %s", ntexts > 1 ? texts[1].s : "-");
     preview("view-not-found");
+}
+
+/* The maintainer's draft of the column (2026-10-25), B16 on track 6 at level 105, from the top row
+   down; '#' lit. */
+static const char *const DRAFT[64] = {
+    ".###################.", "#####################", "#####################", "###....###.####..####",
+    "###.###.#..###.######", "###.###.##.##.#######", "###....###.##....####", "###.###.##.##.###.###",
+    "###.###.##.##.###.###", "###....##...##...####", "#####################", "#####################",
+    ".###################.", ".....................", ".....................", ".###################.",
+    "#...................#", "#...................#", "#..###.##...#..#.#..#", "#...#..#.#.#.#.#.#..#",
+    "#...#..##..###.##...#", "#...#..#.#.#.#.#.#..#", "#...#..#.#.#.#.#.#..#", "#...................#",
+    "#...................#", "#.........##........#", "#........#..........#", "#.......#...........#",
+    "#.......####........#", "#.......#...#.......#", "#.......#...#.......#", "#........###........#",
+    "#...................#", "#...................#", ".###################.", ".....................",
+    ".....................", ".......#######.......", ".###..#.......#..###.", "......#.......#......",
+    "......#.......#......", "......#.......#......", "......#.......#......", "......#.#####.#......",
+    "......#.#####.#......", "......#.#####.#......", ".###..#.#####.#..###.", "......#.#####.#......",
+    "......#.#####.#......", "......#.#####.#......", "......#.#####.#......", "......#.#####.#......",
+    "......#.#####.#......", "......#.#####.#......", ".###..#.#####.#..###.", "......#.#####.#......",
+    "......#.#####.#......", "......#.#####.#......", "......#.#####.#......", "......#.#####.#......",
+    "......#.#####.#......", "......#.#####.#......", ".###..#.......#..###.", ".......#######.......",
+};
+
+/* The meter's bar: how many rows from row 2 are lit in columns 8..12, and whether they are solid. */
+static int bar_rows(int *solid)
+{
+    int y, x, n = 0;
+
+    for (y = 2; y <= 25 && pix(10, y); y++)
+        n++;
+    for (*solid = 1, y = 2; y <= 25; y++)
+        for (x = 8; x <= 12; x++)
+            *solid &= pix(x, y) == (y < 2 + n);
+    return n;
+}
+
+static void test_view_column(void)
+{
+    char *s;
+    int x, y, bad, solid, rows;
+
+    reset_all();
+    hit_frames = 48000;
+    add_file(140, 0xe201, 48000, 0, 48000, hit);
+    s = host_sound(5);
+    make_sound(s, 140, 0xe201);
+    memcpy(s + 4, "STRINGS", 8);
+    tick_until(0xe201, SLOT_READY, 5);
+    host_track = 5;
+    host_pattern = 31;
+    host_level = 105;
+    smp_main_draw(0, &screen);
+    for (bad = 0, y = 0; y < 64; y++)
+        for (x = 0; x <= COL_X1; x++)
+            bad += pix(x, y) != (DRAFT[63 - y][x] == '#');
+    CHECK(bad == 0, "B16, track 6, level 105: the maintainer's draft, pixel for pixel (%d differ)", bad);
+    preview("view-column");
+
+    host_level = 0;
+    smp_main_draw(0, &screen);
+    rows = bar_rows(&solid);
+    CHECK(rows == 0 && solid, "level 0: no bar (%d rows)", rows);
+    host_level = 1;
+    smp_main_draw(0, &screen);
+    rows = bar_rows(&solid);
+    CHECK(rows == 1 && solid, "level 1: one row (%d)", rows);
+    host_level = 64;
+    smp_main_draw(0, &screen);
+    rows = bar_rows(&solid);
+    CHECK(rows == 12 && solid, "level 64: 12 rows (%d)", rows);
+    host_level = 127;
+    smp_main_draw(0, &screen);
+    rows = bar_rows(&solid);
+    CHECK(rows == 23 && solid && pix(7, 26) && pix(13, 26) && !pix(6, 26) && !pix(14, 26),
+          "level 127: all 23 rows, a dark row under the frame's top (%d)", rows);
+
+    host_track = 0;
+    s = host_sound(0);
+    make_sound(s, 140, 0xe201);
+    smp_main_draw(0, &screen);
+    for (bad = 0, y = 32; y <= 38; y++)
+        bad += pix(8, y) + pix(12, y);
+    CHECK(pix(10, 38) && pix(9, 32) && pix(11, 32) && bad == 0, "track 1: a 1 three pixels wide, centred");
+
+    host_pattern = 0;
+    smp_main_draw(0, &screen);
+    CHECK(pix(3, 60) && !pix(4, 60) && !pix(6, 60) && pix(7, 60) && !pix(3, 57) && !pix(7, 57),
+          "A01: an A at the left of the box");
+    host_pattern = 95;
+    smp_main_draw(0, &screen);
+    for (bad = 0, x = 3; x <= 7; x++)
+        bad += pix(x, 60);
+    CHECK(bad == 0 && pix(2, 60) && pix(8, 60), "F16: the F's top bar, 5 pixels");
 }
 
 /* --- the filter ------------------------------------------------------------------------------- */
@@ -1299,6 +1378,7 @@ int main(void)
     test_overview();
     test_view();
     test_view_states();
+    test_view_column();
     test_machine_change();
     test_filter_off_and_lowpass();
     test_filter_off_exact();
