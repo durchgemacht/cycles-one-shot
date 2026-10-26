@@ -44,7 +44,8 @@ from the Model:Samples: looping and reverse playback.
   bar that moves while you turn LEVEL. To its right the sample's name sits in a box like the OS's
   own browser title, and below it the waveform. Lines mark where a trig starts and stops; they move
   while you turn Start and Length.
-- **An upload page.** `uploader/` puts audio files on the +Drive over USB from Chrome or Edge, as
+- **An upload page**, online at <https://durchgemacht.github.io/cycles-one-shot/uploader/> (the
+  same files as `uploader/`). It puts audio files on the +Drive over USB from Chrome or Edge, as
   samples SAMPLE plays, and deletes samples and folders from it (the × on a row, after asking; a
   folder goes with everything in it). It needs no firmware change, so it works with the official OS as well. In the
   folder `/Wavetables`, which model27's CHORD Tables plays as wavetables, it does not write a file
@@ -118,11 +119,12 @@ from the Model:Samples: looping and reverse playback.
    SAMPLE track to one of the six stock machines (a project that still names a machine the official
    OS does not have can freeze its MACHINES page), then install the official 1.13 file the same way.
 3. **Put samples on the +Drive.** Samples already there, for example from the Model:Samples OS,
-   work as they are. For new ones open `uploader/index.html` in Chrome or Edge, press **Connect**,
-   pick a folder and upload. Close Elektron Transfer first, which would hold the MIDI port.
+   work as they are. For new ones open <https://durchgemacht.github.io/cycles-one-shot/uploader/>
+   (or `uploader/index.html` from your copy) in Chrome or Edge, press **Connect**, pick a folder
+   and upload. Close Elektron Transfer first, which would hold the MIDI port.
 4. **Play.** Set a track to SAMPLE, open the PRESET browser (FUNC + MACHINE) and open a sample.
 
-If Chrome refuses MIDI to a page opened from disk, serve the folder locally and open
+If Chrome refuses MIDI to the page opened from disk, serve the folder locally and open
 http://localhost:8000:
 
 ```sh
