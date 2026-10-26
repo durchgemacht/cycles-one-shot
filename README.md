@@ -1,16 +1,17 @@
 # Cycles One-Shot
 
-A one-shot sampler machine for the Elektron Model:Cycles, OS 1.13. It adds SAMPLE as a 7th machine
-next to the six stock ones and plays samples from the +Drive. You choose a sample in the OS's own
-PRESET browser, and it is saved with the sound.
+A sampler machine for the Elektron Model:Cycles, OS 1.13. It adds SAMPLE as a 7th machine next to
+the six stock ones and plays samples from the +Drive, once per trig, and in
+[model27](https://github.com/durchgemacht/model27)'s builds also in a loop and in reverse. You choose
+a sample in the OS's own PRESET browser, and it is saved with the sound.
 
 The goal for now is the Model:Samples' sampler on the Cycles, in sound and in features. The sound
 is there: SAMPLE plays a sample the way the Model:Samples does, with 6-tap interpolation at twice
 the rate, then a 2:1 decimator. Nothing of it is copied from Elektron. The interpolation and its
 table are our own design and code; the decimator is the one the Cycles OS already has, which SAMPLE
 calls where it is (the Model:Samples uses the same). Start, Length and the filter work as on the
-Model:Samples; the filter follows its measured laws with our own design and code. Still to come
-from the Model:Samples: looping and reverse playback.
+Model:Samples; the filter follows its measured laws with our own design and code. Loop and reverse
+work as on the Model:Samples too, as two switches of model27's builds (below).
 
 ## Features
 
@@ -25,7 +26,17 @@ from the Model:Samples: looping and reverse playback.
 - **Start and Length as on the Model:Samples.** Both run from 0 to 120, so moving Start keeps the
   length and 120 splits evenly into slices.
 - **No clicks at the edges.** 4 ms fades at the end of what a trig plays, and at its start when
-  Start lies inside the sample. A sample played from its first frame keeps its attack.
+  Start lies inside the sample. A sample played from its first frame keeps its attack. A trig that
+  cuts a note still sounding brings the new one in over 0.67 ms, as the Model:Samples does.
+- **Loop and reverse, in model27's builds.** Hold RETRIG and press PUNCH for Loop, GATE for Reverse;
+  on a SAMPLE track that flips the switch instead of PUNCH or GATE, and their LEDs show the switches
+  while RETRIG is held. Both are saved with the sound, and the name's box ends with L or R while they
+  are on. Loop plays what Start and Length select again and again with a hard seam, as on the
+  Model:Samples, so a single cycle of a waveform loops without a step; the note then plays until
+  DECAY has closed it. Switched off, a loop plays to the end of the window (at least 4 ms on) and
+  fades out. Reverse plays the window from its end to its start, from the next trig on; both together
+  loop backwards. The switches come from model27's shortcut layer, so One-Shot's own image plays
+  one shot, forward.
 - **The Model:Samples' filter.** One knob, SWEEP, closes a lowpass to the left of 64 and a highpass
   to the right; CONTOUR adds resonance, up to a +27 dB peak at the cutoff. Frequency, resonance
   and how the resonance thins out towards the top follow the Model:Samples, measured on its OS
@@ -60,9 +71,16 @@ from the Model:Samples: looping and reverse playback.
 | SWEEP | Cutoff, shown as −64 … 63 like the Model:Samples: below 0 a lowpass that closes towards −64 (5 Hz), above 0 a highpass that closes towards 63 (19 kHz); 0 = off |
 | CONTOUR | Reso, resonance 0–127 |
 | DECAY, GATE, PUNCH | the stock amp chain, set up as on TONE. DECAY starts at 127, so a sample plays out; GATE is heard with a lower DECAY |
+| RETRIG + PUNCH (model27) | Loop, on or off |
+| RETRIG + GATE (model27) | Reverse, on or off, from the next trig on |
 
 ## Status
 
+- **Machine 0.11** (Loop and Reverse as switches for model27's shortcut layer, L and R in the name's
+  box; a trig that cuts a sounding note fades the new one in over 0.67 ms; a voice whose amp envelope
+  has closed lets go of its sample): host-tested, and tested in the digiemu emulator in model27's
+  build with the switches (2026-10-26). One-Shot's own image, without the switches, is host-tested;
+  not yet on a device.
 - **Machine 0.10** (a column on the left with the pattern's number, the track's number and its
   level; the waveform 105 pixels wide to its right): tested on a Model:Cycles (2026-10-25), and in
   the digiemu emulator.
@@ -99,7 +117,8 @@ from the Model:Samples: looping and reverse playback.
   nor with Model-TG or Modded-Cycles' track filter, which hook the same sound record functions of the
   OS; nor with sample preview. The build computes that list from the clone's tweaks. Every other mod of
   Modded-Cycles 1.55 combines with SAMPLE at the byte level, checked with Modded-Cycles' own tools, but
-  not yet tried together on a machine.
+  not yet tried together on a machine. Loop and Reverse need model27's shortcut layer; there SAMPLE
+  does not go with lfo-plus (LFO 2, 3, 4), which keeps LFO 2's depth where the switches are saved.
 - **Not One-Shot's doing:** when loading a project asks "Save … before loading?", Yes saves the
   project you leave but does not load the other one. The official OS 1.13 does the same.
 
@@ -114,7 +133,7 @@ from the Model:Samples: looping and reverse playback.
    python3 machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
    ```
 
-   This writes `build/model-cycles_OS1.13-sampler-v0.10.syx` and `build/sampler-tweak.json`, the
+   This writes `build/model-cycles_OS1.13-sampler-v0.11.syx` and `build/sampler-tweak.json`, the
    same machine as a tweak file Modded-Cycles' own `tools/build.py` accepts, and checks every change
    against the stock bytes.
 2. **Install it** over USB the way you install an official OS update. To go back, first set every

@@ -193,8 +193,26 @@ the note into a ratio, linear within a semitone, and multiplies it by the sample
 48 kHz, so a sample keeps its pitch at any rate, and hands SWEEP and CONTOUR to the filter.
 `render` runs the core (64 frames at 96 kHz), the stock decimator, the amp chain and then the
 filter (section 16), the last stage of a track as on the Model:Samples. It skips all of that while
-no trig is pending and the sample has ended or the envelope is below −102 dB; a filter whose
-resonance still rings then runs on silence until it has died away.
+no trig is pending and the sample has ended or the envelope is below −102 dB, and the voice then
+counts as done, a loop too, so its sample may be freed; a filter whose resonance still rings runs on
+silence until it has died away.
+
+**A trig that cuts a sounding note.** In the trig's block the VCA takes the old note out in 0.67 ms
+(section 5); the new one starts in the next block, at full level, and so with a step when its first
+frame is not near 0 (a saw or square cycle, or a sample played in reverse). The Model:Samples ramps
+its level from 0 there (section 13), and SAMPLE does the same: when the trig's block still rendered
+an active voice, the new note's first block is scaled frame by frame by i / 32 after the VCA. A trig
+on a silent voice starts as before, so a drum hit keeps its attack.
+
+**The switches** (model27's builds, `SMP_SWITCHES`). model27's shortcut layer flips bits of the
+sound's k 32 on RETRIG + PUNCH and RETRIG + GATE on a track of a machine that declares them, and
+saves k 32 in record slot 18 ([model27 notes/63](https://github.com/durchgemacht/model27/blob/main/notes/63-level-b4-shortcuts-dispatchers.md)
+§16). `update` reads k 32 every block in the sound the note plays (`CUR_SND(t)` + 84), or in the
+audio side's copy (`TARGETS(t)` + 64) when that pointer is 0 (a preview note), not in the
+parameters it is given, which the OS smooths block by block, so two bits in one word would glide
+through wrong values. Bit 8 (`SW_LOOP`) asks the core to loop, block by block; bit 9 (`SW_REVERSE`)
+sets the direction at the trig. One-Shot's own build leaves `SMP_SWITCHES` out and reads neither:
+there k 32 may belong to another mod (Modded-Cycles' lfo-plus keeps LFO 2 in k 28–32).
 
 ## 6. Sounds, kits and records
 
@@ -210,6 +228,7 @@ at `+212 + t · 68`, and entry +40 of that owner's vtable returns the sound (the
 | `+20 + 2k` | parameter k, 8.8 (k 6 SWEEP at `+32`, k 7 CONTOUR at `+34`, k 11 COLOR at `+42`, k 12 SHAPE at `+44`) |
 | `+38` | the machine (high byte of k 9) |
 | `+70` | k 25–27: unused by the OS; SAMPLE keeps its key here (below) |
+| `+84` | k 32: unused by the OS; in model27's builds the switches (section 5), bit 8 Loop, bit 9 Reverse |
 
 **Kits.** The 96 patterns' kits sit at `0x409c9c80 + 7094 · n`: the six track sounds from `+28`,
 then the pool of 64 sounds from `+694` (the sounds that sound locks play). The audio side plays
@@ -330,7 +349,9 @@ markers move while the knob turns.
   MainScreenView it shows only the current pattern, not a queued one.
 - **The name's box**, 2 dark columns to the right (columns 23–127, rows 51–63), in the look of the
   browser's title (below): lit, its corner pixels dark, the sound's name in dark letters 2 pixels
-  in; a name of 15 characters takes 89 pixels at most of its 101.
+  in; a name of 15 characters takes 89 pixels at most of its 101. In model27's builds the box ends
+  with the switches that are on, in dark letters of 3 × 5 in TRAK's style, each in its own place past
+  the longest name: L for Loop at columns 119–121, R for Reverse at 123–125, rows 55–59.
 - **The waveform**, under the name's box from column 23: 105 columns (`SMP_COLUMNS` in
   `machine/pool.h`) of minimum and maximum that `pool.c` gathers while the file loads.
   NO SAMPLE, LOADING and NOT FOUND stand centred over it.
@@ -421,6 +442,20 @@ each block the core copies the frames it will read into a scratch buffer, with s
 they fall outside the start–end window, so the inner loop needs no bounds checks. The voice switches
 off once every tap has passed the end. A full-scale frame comes out as `32767 << 15`, half of Q31,
 the level the Cycles' machines hand to the decimator.
+
+**Loop and reverse.** The playhead counts frames from the first frame played, along the direction it
+plays; `fetch` maps that count to the window, forward from the start or reverse from the last frame,
+so the inner loop is the same for both and reverse plays exactly what forward plays of the window
+turned round. A loop goes round with a hard seam, as the Model:Samples' render does (section 13): no
+fade, the playhead keeps its overshoot, and past the end of a pass (and before its first frame, once
+it has gone round) `fetch` copies the window's other end, so the taps read across the seam and a
+single cycle loops as a continuous waveform (a 100-frame sine plays at least 77 dB clean of anything
+else, at any pitch). A window shorter than a block goes round several times within it. Whether a
+voice loops is asked every block (`smp_set_loop`): switched on, it loops from its next end on unless
+its fade-out has begun; switched off, it ends at the end of the first pass that lies at least 4 ms
+ahead at its pitch, so the fade-out is whole even when one pass is shorter (a single cycle lasts
+about 2 ms at 480 Hz). The direction is set at the trig. Reverse fades in when the window ends
+before the sample's last frame, the mirror of a start inside the sample.
 
 **Fades.** When the window starts past the sample's first frame, the core fades in over 384 frames
 at 96 kHz (4 ms); every window fades out over the 384 frames before the playhead reaches its end.
@@ -565,7 +600,10 @@ From reading its MAIN OS; addresses here are the Model:Samples'.
   sits in SRAM at `0x8000a000` in three banks of 1 KB, each holding two taps per row; the reset
   code copies it there from the image at `0x401A44F0`.
 - **Decimation** at `0x400a714e` uses the same code and coefficients as the Cycles' `0x400a9f58`.
-- **The window**: `0x400a62dc` (section 11), which also handles loop and reverse.
+- **The window**: `0x400a62dc` (section 11), which also handles loop and reverse: with Flip it swaps
+  start and end. In the render (`0x400a6abc`) a voice flag at `+100` reads as Loop and one at `+102`
+  as the direction; past the end with Loop on, the position moves back by the window's length and
+  keeps its overshoot (`0x400a6c92`), with no fade at the seam. Read, not followed through.
 - **Level.** The end of the render (`0x400a7266`) ramps each voice's level linearly within a block,
   as the Cycles' VCA does: normally to full; to 0 in the block of a new trig when a voice flag
   (`+40`) is set; to a quarter each block when another (`+41`) is set and a track value is 0. The
@@ -580,7 +618,7 @@ From reading its MAIN OS; addresses here are the Model:Samples'.
 
 **Build.** `machine/build.py --stock model-cycles_OS1.13.syx --modded-cycles path/to/Modded-Cycles
 [--tool path/to/elektron-firmware-tool]` starts from your copy of the official file (checked by
-its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.10.syx`, a `.json` report and the
+its SHA-256) and writes `build/model-cycles_OS1.13-sampler-v0.11.syx`, a `.json` report and the
 tweak in Modded-Cycles' format (`build/sampler-tweak.json`). That tweak file is the machine as
 Modded-Cycles' own `tools/build.py` installs it: copied into its `tweaks/model-cycles_OS1.13/`
 folder as `27-sampler.json`, `python3 tools/build.py -i model-cycles_OS1.13.syx -t sampler` gives
@@ -593,9 +631,10 @@ Control All Config); 0.6 was built against `6a9742a` and verified against `95b63
 `m68k-elf-gcc`, `m68k-elf-binutils`); for the upload page node.
 
 ```sh
-make test            # the core: every frame against a 64-bit reference, fades included
+make test            # the core: every frame against a 64-bit reference, fades, reverse and loops included
 make filter-test     # the filter: its table, response against its laws, starts, glide, fades, saturation
-make machine-test    # bridge, sample memory, view and the filter's place, with stand-ins for the OS
+make machine-test    # bridge, sample memory, view and the filter's place, with stand-ins for the OS,
+                     # built with the switches (SMP_SWITCHES) and without
 make uploader-test   # the upload page's protocol code and page, against a stand-in Cycles
 make target          # compile the core for the ColdFire: size, undefined symbols (must be none)
 make measure         # the SINAD and gain grid
@@ -694,6 +733,16 @@ pixels per OS pixel) and compare against the PBM pictures above.
   from column 23; also under ASan and UBSan; `make test`; `make filter-test`), the build against
   Modded-Cycles `95b63b7` with elektron-firmware-tool's check, then digiemu and a Model:Cycles
   (2026-10-25), with the same image byte for byte.
+- **Machine 0.11** (Loop and Reverse, the fade-in after a cut, 2026-10-26): host tests (`make test`:
+  forward and reverse against the 64-bit reference, loops of 1 to 3,000 frames at random ratios bit
+  for bit, the loop switched on and off at random with the end where section 10 says, single cycles
+  of a sine, no step on a DC sample at any switch, six deliberate faults in the core all caught;
+  `make machine-test` with and without the switches: the switches read from the note's sound and from
+  the copy, L and R in the box, the fade-in after a cut and not after silence, also under ASan and
+  UBSan; `make filter-test`), then digiemu in model27's build with the switches: works. A first
+  report of regular clicks with Loop on was, as far as the maintainer can tell, RETRIG left latched in
+  digiemu, which keeps retriggering the track; the fade-in after a cut came out of that report.
+  One-Shot's own image not yet on a device.
 - **Upload page 0.2** (deleting, 2026-10-26): host tests (`make uploader-test`: a no deletes
   nothing, a file goes, `factory` and `/incoming` have no ×, a folder with a folder in it goes with
   its contents first, a refusal stops it and is shown). On a Model:Cycles (2026-10-26).

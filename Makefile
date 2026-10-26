@@ -7,7 +7,8 @@
 #   make coeffs     regenerate src/smp_coeffs.c from the design values below
 #   make filter-table   regenerate src/smp_filter_tab.c (tools/gen_filter_table.py); check-filter-table compares
 #   make render     build tools/render (listening tests, see its header)
-#   make machine-test   host tests of the machine: bridge (machine/sampler.c) and sample memory (machine/pool.c)
+#   make machine-test   host tests of the machine: bridge (machine/sampler.c) and sample memory (machine/pool.c),
+#                   with the switches and without
 #   make uploader-test  host tests of the upload page (uploader/, needs node)
 # The machine itself: python3 machine/build.py --stock ... --modded-cycles ... (see README)
 
@@ -56,11 +57,17 @@ render: $(B)/render
 MACHINE := machine/sampler.c machine/pool.c machine/pool.h machine/view.c machine/view.h machine/os.h \
            machine/host_os.h
 
+# with the switches (model27's builds, SMP_SWITCHES) and without them (One-Shot's own build)
 $(B)/test_sampler: machine/test_sampler.c $(MACHINE) $(CORE) $(FILTER) src/smp_core.h src/smp_filter.h | $(B)
+	$(CC) -std=c11 -O2 -Wall -Wextra -DSMP_DEBUG -DSMP_SWITCHES -Isrc -Imachine -o $@ machine/test_sampler.c $(CORE) \
+	    $(FILTER) -lm
+
+$(B)/test_sampler_plain: machine/test_sampler.c $(MACHINE) $(CORE) $(FILTER) src/smp_core.h src/smp_filter.h | $(B)
 	$(CC) -std=c11 -O2 -Wall -Wextra -DSMP_DEBUG -Isrc -Imachine -o $@ machine/test_sampler.c $(CORE) $(FILTER) -lm
 
-machine-test: $(B)/test_sampler
+machine-test: $(B)/test_sampler $(B)/test_sampler_plain
 	$(B)/test_sampler
+	$(B)/test_sampler_plain
 
 uploader-test:
 	node uploader/test.js

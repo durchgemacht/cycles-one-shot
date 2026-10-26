@@ -80,7 +80,7 @@ static void render(int method, const int16_t (*table)[SMP_TAPS], const int16_t *
 
         for (k = 0; k < SMP_TAPS; k++)
             dc += table[0][k];
-        smp_trigger(&v, src, len, 0, len);
+        smp_trigger(&v, src, len, 0, len, 0);
         smp_set_ratio(&v, ratio_q16);
         for (j = 0; j < n2; j += SMP_BLOCK2X) {
             smp_render_with(&v, out, scratch, table);

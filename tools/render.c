@@ -302,7 +302,7 @@ int main(int argc, char **argv)
 
             for (i = 0; i < SMP_TAPS; i++)
                 dc += tab[0][i];
-            smp_trigger(&v, pcm, (int32_t)n, 0, (int32_t)n);
+            smp_trigger(&v, pcm, (int32_t)n, 0, (int32_t)n, 0);
             smp_set_ratio(&v, ratio_q16);
             while (n2 + SMP_BLOCK2X <= cap && smp_render_with(&v, blk, scratch, tab))
                 for (i = 0; i < SMP_BLOCK2X; i++)

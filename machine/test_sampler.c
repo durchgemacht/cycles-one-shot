@@ -1009,6 +1009,173 @@ static void test_view(void)
     CHECK(host_main_draws == 3 && host_knob_draws == 3, "other machines keep the stock views");
 }
 
+/* One block with the trig flags as the voice loop sets them: now = a trig in this block (v+0x34), prev =
+   one in the block before (v+0x38). */
+static void block2(int t, int now, int prev, int32_t *out)
+{
+    *v32(t, 0x34) = now;
+    *v32(t, 0x38) = prev;
+    sampler_update(60 << 16, voice(t), params);
+    sampler_render(out, voice(t));
+}
+
+/* A trig that cuts a voice still sounding brings its note in from silence over its first block, frame i at
+   i / 32, as the Model:Samples' level stage; a trig on a silent voice starts as recorded; only that block. */
+static void test_cut_fade_in(void)
+{
+    int32_t fresh[3][SMP_BLOCK], cut[3][SMP_BLOCK], out[SMP_BLOCK];
+    int i, b, same = 1, ramp_ok = 1, after = 1, nonzero = 0;
+
+    reset_all();
+    defaults();
+    add_file(132, 0xd105, 48000, 0, 48000, ramp);
+    make_sound(host_sound(4), 132, 0xd105);
+    tick_until(0xd105, SLOT_READY, 5);
+    target_names(4, 0xd105);
+    *v32(4, 0x230) = *v32(4, 0x234) = 0x40000000;       /* the amp envelope open */
+    block2(4, 1, 0, fresh[0]);                          /* a trig on a silent voice */
+    block2(4, 0, 1, fresh[1]);
+    block2(4, 0, 0, fresh[2]);
+
+    reset_all();
+    defaults();
+    add_file(132, 0xd105, 48000, 0, 48000, ramp);
+    make_sound(host_sound(4), 132, 0xd105);
+    tick_until(0xd105, SLOT_READY, 5);
+    target_names(4, 0xd105);
+    *v32(4, 0x230) = *v32(4, 0x234) = 0x40000000;
+    block2(4, 1, 0, out);                               /* a note that sounds ... */
+    block2(4, 0, 1, out);
+    for (b = 0; b < 20; b++)
+        block2(4, 0, 0, out);
+    CHECK(voices[4].active, "the first note still sounds");
+    block2(4, 1, 0, cut[0]);                            /* ... cut by the next trig */
+    block2(4, 0, 1, cut[1]);
+    block2(4, 0, 0, cut[2]);
+    for (i = 0; i < SMP_BLOCK; i++) {
+        ramp_ok &= cut[1][i] == fresh[1][i] / SMP_BLOCK * i;
+        nonzero += fresh[1][i] != 0;
+        after &= cut[2][i] == fresh[2][i];
+    }
+    CHECK(nonzero > 16 && ramp_ok && cut[1][0] == 0, "the cut note's first block comes in from silence, frame i at i / 32");
+    CHECK(after, "and the block after it is as from silence");
+
+    /* from silence, trigs in two blocks running: the first note starts as recorded, the second cuts it in its
+       own first block and comes in */
+    reset_all();
+    defaults();
+    add_file(132, 0xd105, 48000, 0, 48000, ramp);
+    make_sound(host_sound(4), 132, 0xd105);
+    tick_until(0xd105, SLOT_READY, 5);
+    target_names(4, 0xd105);
+    *v32(4, 0x230) = *v32(4, 0x234) = 0x40000000;
+    block2(4, 1, 0, out);
+    block2(4, 1, 1, out);
+    for (i = 0; i < SMP_BLOCK; i++)
+        same &= out[i] == fresh[1][i];
+    block2(4, 0, 1, out);
+    for (i = 0; i < SMP_BLOCK; i++)
+        ramp_ok &= out[i] == fresh[1][i] / SMP_BLOCK * i;
+    CHECK(same && ramp_ok, "trigs in two blocks running: the first as recorded, the second in from silence");
+}
+
+#ifdef SMP_SWITCHES
+/* --- the switches (model27's shortcut layer) ------------------------------------------------------ */
+
+static void set_k32(char *sound, int value)
+{
+    int16_t w = (int16_t)value;
+
+    memcpy(sound + SOUND_K32, &w, 2);
+}
+
+/* The switches come from the sound the note plays (CUR_SND), or from the audio side's copy when it
+   has none: Loop every block, Reverse at the trig. A loop plays on past the sample's end until the amp
+   envelope closes; then the voice is done and no longer holds its sample. */
+static void test_switches(void)
+{
+    _Alignas(4) char snd[100];
+    int32_t out[SMP_BLOCK];
+    int i, on = 1;
+
+    reset_all();
+    defaults();
+    add_file(130, 0xd101, 4800, 0, 48000, ramp);         /* 0.1 s: 150 blocks */
+    make_sound(host_sound(1), 130, 0xd101);
+    tick_until(0xd101, SLOT_READY, 5);
+    target_names(1, 0xd101);
+    memset(snd, 0, sizeof snd);
+    host_cur_snd[1] = snd;
+    *v32(1, 0x230) = *v32(1, 0x234) = 0x40000000;       /* the amp envelope open */
+
+    block(1, 1, 60 << 16, out);
+    CHECK(voices[1].active && !voices[1].loop && !voices[1].reverse && voices[1].stop == 4800,
+          "both off: once, forward");
+    set_k32(snd, SW_REVERSE);
+    block(1, 0, 60 << 16, out);
+    CHECK(!voices[1].reverse, "Reverse waits for the next trig");
+    block(1, 1, 60 << 16, out);
+    CHECK(voices[1].reverse && !voices[1].loop, "Reverse at the trig");
+    set_k32(snd, SW_LOOP);
+    block(1, 0, 60 << 16, out);
+    CHECK(voices[1].loop && voices[1].reverse && voices[1].stop == SMP_LOOPING,
+          "Loop at once, on the note that plays; Reverse stays until the next trig");
+    for (i = 0; i < 400; i++) {
+        block(1, 0, 60 << 16, out);
+        on &= voices[1].active;
+    }
+    CHECK(on && voices[1].stop == SMP_LOOPING, "a loop plays on past the sample's 150 blocks");
+    *v32(1, 0x230) = *v32(1, 0x234) = 0;                /* the amp envelope closed */
+    block(1, 0, 60 << 16, out);
+    CHECK(!voices[1].active, "a closed envelope ends the loop");
+
+    host_cur_snd[1] = 0;                                /* a preview note: the copy's k 32 */
+    set_k32(snd, 0);
+    memcpy(host_targets + 66 * 1 + 64, &(int16_t){SW_LOOP | SW_REVERSE}, 2);
+    *v32(1, 0x230) = *v32(1, 0x234) = 0x40000000;
+    block(1, 1, 60 << 16, out);
+    CHECK(voices[1].loop && voices[1].reverse, "a preview note reads the copy");
+    memset(host_targets + 66 * 1 + 64, 0, 2);
+    block(1, 1, 60 << 16, out);
+    CHECK(!voices[1].loop && !voices[1].reverse, "and both off there");
+}
+
+/* L and R at the right end of the name's box, dark in it like the name, each in its own place. */
+static void test_view_switches(void)
+{
+    static const char *const names[4] = { "switches-none", "switches-L", "switches-R", "switches-LR" };
+    static const int letters[2][5] = { {4, 4, 4, 4, 7}, {6, 5, 6, 5, 5} };
+    char *s;
+    int sw, i, r, c, ok;
+
+    reset_all();
+    hit_frames = 48000;
+    add_file(131, 0xd103, 48000, 0, 48000, hit);
+    s = host_sound(2);
+    make_sound(s, 131, 0xd103);
+    memcpy(s + 4, "STRINGS LONG C3", 16);              /* 15 characters, the longest name */
+    tick_until(0xd103, SLOT_READY, 5);
+    host_track = 2;
+    host_pattern = 19;
+    host_level = 100;
+    set_knob(s, 42, 0);
+    set_knob(s, 44, 120);
+    CHECK(SWITCH_X >= NAME_X0 + 2 + 89 + 5 && SWITCH_X + 6 <= NAME_X1 - 2, "the letters past the longest name, in the box");
+    for (sw = 0; sw < 4; sw++) {
+        set_k32(s, (sw & 1 ? SW_LOOP : 0) | (sw & 2 ? SW_REVERSE : 0));
+        smp_main_draw(0, &screen);
+        for (ok = 1, i = 0; i < 2; i++)
+            for (r = 0; r < 5; r++)
+                for (c = 0; c < 3; c++)
+                    ok &= pix(SWITCH_X + 4 * i + c, SWITCH_TOP - r) == !((sw >> i & 1) && (letters[i][r] & (4 >> c)));
+        for (c = SWITCH_X - 1; c <= SWITCH_X + 7; c++)
+            ok &= pix(c, SWITCH_TOP + 1) && pix(c, SWITCH_TOP - 5);
+        CHECK(ok, "%s: the letters dark in the lit box", names[sw]);
+        preview(names[sw]);
+    }
+}
+#endif
+
 static void test_view_states(void)
 {
     char *s;
@@ -1387,12 +1554,21 @@ int main(void)
     test_filter_record();
     test_cutoff_text();
     test_cutoff_install();
+    test_cut_fade_in();
+#ifdef SMP_SWITCHES
+    test_switches();
+    test_view_switches();
+#endif
     drop_files();
     CHECK(nested == 0, "file system calls under the lock, or the index without it: %d", nested);
     if (failures) {
         printf("%d check(s) failed\n", failures);
         return 1;
     }
-    printf("all bridge, pool and view tests passed\n");
+#ifdef SMP_SWITCHES
+    printf("all bridge, pool and view tests passed, with the switches\n");
+#else
+    printf("all bridge, pool and view tests passed, without the switches\n");
+#endif
     return 0;
 }
