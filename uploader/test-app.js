@@ -88,6 +88,23 @@ function answer(m) {
         drive.set(f.path, { folder: false, data: f.data });
         return out([1]);
     }
+    /* a file marked inUse stands for the one the Cycles sometimes refuses until it restarts */
+    case E.TYPE.DELETE_FILE: {
+        const p = str(body, 0), it = drive.get(p);
+        if (!it || it.folder || drive.get(E.parentPath(p)).protect)
+            return out([0]);
+        if (it.inUse)
+            return out([0, ...E.encodeText("File in use"), 0]);
+        drive.delete(p);
+        return out([1]);
+    }
+    case E.TYPE.DELETE_DIR: {
+        const p = str(body, 0), it = drive.get(p);
+        if (p === "/" || !it || !it.folder || it.protect || children(p).length)
+            return out([0]);
+        drive.delete(p);
+        return out([1]);
+    }
     }
     return out([0]);
 }
@@ -145,6 +162,8 @@ const sandbox = {
 sandbox.window = sandbox;
 let folderName = "My Samples";
 sandbox.window.prompt = () => folderName;
+let confirmAnswer = true, asked = [];
+sandbox.window.confirm = (text) => { asked.push(text); return confirmAnswer; };
 vm.createContext(sandbox);
 for (const f of ["elektron.js", "app.js"])
     vm.runInContext(fs.readFileSync(path.join(__dirname, f), "utf8"), sandbox, { filename: f });
@@ -156,6 +175,11 @@ async function until(cond, what) {
     check(cond(), what);
 }
 const names = (list) => list.children.map(li => (li.children[0] ? li.children[0].textContent : li.textContent));
+const row = (name) => elements.folder.children.find(li => li.children[0] && li.children[0].textContent === name);
+const under = (dir) => [...drive.keys()].filter(p => p === dir || p.startsWith(dir + "/"));
+/* the × of a row, clicked: the event must not reach the row, which would open a folder */
+let stopped = false;
+const del = (name) => row(name).children[2].onclick({ stopPropagation() { stopped = true; } });
 const state_files = () => elements.files.children.filter(li => li.children.length === 3).length;
 
 (async () => {
@@ -258,6 +282,62 @@ const state_files = () => elements.files.children.filter(li => li.children.lengt
     check(log.slice(before).filter(t => t === E.TYPE.OPEN_WRITE).length === 1, "only 04 was opened for writing");
     check(/1 of 2 uploaded to \/Wavetables\. 1 not uploaded: CHORD Tables cannot play it\./.test(elements.status.textContent) &&
           elements.status.className === "bad", "the status line says it: " + elements.status.textContent);
+
+    /* deleting a file: nothing goes without a yes */
+    const deletes = () => log.filter(t => t === E.TYPE.DELETE_FILE || t === E.TYPE.DELETE_DIR).length;
+    check(row("01") && row("01").children[2].title === "Delete from the Cycles" && !row("01").children[2].disabled,
+          "a file's row has its ×");
+    confirmAnswer = false;
+    await del("01");
+    check(stopped, "the × keeps its click from the row");
+    check(/^Delete “01” from the Cycles\? This cannot be undone\.$/.test(asked[asked.length - 1]),
+          "it asks first: " + asked[asked.length - 1]);
+    check(deletes() === 0 && drive.has("/Wavetables/01"), "a no deletes nothing");
+    confirmAnswer = true;
+    del("01");
+    await until(() => elements.status.textContent === "Deleted /Wavetables/01.", "a yes deletes it: " + elements.status.textContent);
+    check(elements.status.className === "ok", "said in the ok colour");
+    check(!drive.has("/Wavetables/01") && drive.has("/Wavetables/02"), "only 01 is gone from the drive");
+    check(!row("01") && row("02") && elements.path.textContent === "/Wavetables", "and from the list; the page stays in the folder");
+
+    /* the root: no × on what the Cycles protects, nor on /incoming, which it makes itself */
+    elements.folder.children[0].onclick();                         /* .. */
+    await until(() => elements.path.textContent === "/", "back at the root for deleting");
+    check(row("factory").children[2].disabled && row("factory").children[2].className === "del kept", "factory has no ×");
+    check(row("incoming").children[2].disabled && row("incoming").children[2].className === "del kept", "incoming has no ×");
+    check(!row("My Samples").children[2].disabled && row("My Samples").children[2].className === "del", "My Samples has its ×");
+
+    /* a folder with a folder in it goes with everything in it, the contents first */
+    drive.set("/My Samples/Hats", { folder: true });
+    drive.set("/My Samples/Hats/Hat 1", { folder: false, data: new Uint8Array(80) });
+    drive.set("/My Samples/Hats/Hat 2", { folder: false, data: new Uint8Array(80) });
+    const deleteLog = log.length;
+    del("My Samples");
+    await until(() => elements.status.textContent === "Deleted /My Samples.", "the folder is deleted: " + elements.status.textContent);
+    check(/^Delete the folder “My Samples” and everything in it from the Cycles\?/.test(asked[asked.length - 1]),
+          "it asks about the folder and everything in it: " + asked[asked.length - 1]);
+    check(under("/My Samples").length === 0, "nothing of it is left: " + under("/My Samples"));
+    const order = log.slice(deleteLog).filter(t => t === E.TYPE.DELETE_FILE || t === E.TYPE.DELETE_DIR);
+    /* Kick 01, then Hats with its two files: the stand-in lists in the order things were made */
+    check(JSON.stringify(order) === JSON.stringify([E.TYPE.DELETE_FILE, E.TYPE.DELETE_FILE, E.TYPE.DELETE_FILE,
+                                                    E.TYPE.DELETE_DIR, E.TYPE.DELETE_DIR]),
+          "three files, two folders, each folder after its contents: " + order.map(t => "0x" + t.toString(16)));
+    check(!row("My Samples") && elements.path.textContent === "/", "it leaves the list; the page stays at the root");
+    check(drive.has("/Wavetables/02") && drive.has("/incoming"), "the other folders stay");
+
+    /* the Cycles refuses one: it stops there, says why, and lists what is left */
+    drive.set("/Kit", { folder: true });
+    drive.set("/Kit/a", { folder: false, data: new Uint8Array(80) });
+    drive.set("/Kit/b", { folder: false, data: new Uint8Array(80), inUse: true });
+    drive.set("/Kit/c", { folder: false, data: new Uint8Array(80) });
+    elements.refresh.onclick();
+    await until(() => !!row("Kit"), "the new folder is listed");
+    del("Kit");
+    await until(() => elements.status.className === "bad", "the refusal ends it");
+    check(elements.status.textContent === "the Cycles did not delete /Kit/b: File in use", "the refusal is shown: " + elements.status.textContent);
+    check(!drive.has("/Kit/a") && drive.has("/Kit/b") && drive.has("/Kit/c") && drive.has("/Kit"), "a went, b and what follows stay");
+    check(!!row("Kit") && elements.path.textContent === "/", "the folder is still listed");
+    check(!elements.connect.disabled && !row("Kit").children[2].disabled, "the page takes clicks again");
 
     if (failures) {
         console.log(failures + " check(s) failed");

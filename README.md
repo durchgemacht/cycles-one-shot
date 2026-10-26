@@ -45,7 +45,8 @@ from the Model:Samples: looping and reverse playback.
   own browser title, and below it the waveform. Lines mark where a trig starts and stops; they move
   while you turn Start and Length.
 - **An upload page.** `uploader/` puts audio files on the +Drive over USB from Chrome or Edge, as
-  samples SAMPLE plays. It needs no firmware change, so it works with the official OS as well. In the
+  samples SAMPLE plays, and deletes samples and folders from it (the × on a row, after asking; a
+  folder goes with everything in it). It needs no firmware change, so it works with the official OS as well. In the
   folder `/Wavetables`, which model27's CHORD Tables plays as wavetables, it does not write a file
   CHORD Tables cannot play (not 1 to 32 frames of 256 samples, as a 48 kHz WAV), and it warns about a
   file whose first frame is not a sine: on such a table SWEEP 0 plays no sine.
@@ -86,6 +87,9 @@ from the Model:Samples: looping and reverse playback.
   and in the digiemu emulator. A sound saved by 0.4 or earlier loads with the filter off.
 - **Machine 0.4** (waveform view, Start and Length as on the Model:Samples, fades): tested on a
   Model:Cycles (2026-10-17), and in the digiemu emulator.
+- **Upload page 0.2** (deleting files and folders): host tests against a stand-in Cycles; not yet
+  tried on a Model:Cycles. A sample that is loaded plays on until no sound names it or the Cycles
+  restarts; after that a sound that names it stays silent.
 - **Upload page 0.1:** tested with a Model:Cycles (Chrome on macOS).
 - **Limits:** SAMPLE is a tweak of its own, so it cannot be installed next to another tweak that adds
   machines (MACRO, ACID, the Syntakt engines, the SD Vintage variants) until a combined build exists;

@@ -508,9 +508,21 @@ over Web MIDI:
 - **Request:** sequence number (2 bytes), two zero bytes, the type, the body. **Reply:** the
   request's sequence number in bytes 2–3, the type | 0x80 in byte 4, status in byte 5 (1 = done).
 - **Commands:** `0x14` read a folder, `0x15` make a folder, `0x43` open a file for writing, `0x45`
-  write (8 KB blocks), `0x44` close. A Model:Samples answers `0x10`, `0x11` and `0x40`–`0x42` for
-  the same. Paths and names travel as Windows-1252.
+  write (8 KB blocks), `0x44` close, `0x24` delete a file, `0x16` delete a folder. A Model:Samples
+  answers `0x10`, `0x11`, `0x40`–`0x42`, `0x20` and `0x12` for the same. Paths and names travel as
+  Windows-1252.
 - Closing hashes the file (section 7), after which the browser lists it and SAMPLE plays it.
+- **Deleting.** The OS 1.13 lists `0x16` and `0x24` among the types it takes (the list at
+  `0x40112d44`) and builds a message for both (the factory switch at `0x4009247c`); `0x24` parses a
+  path like `0x14`. ModdedTransfer deletes files on a Cycles with Model-TG, which hands its `0x20` to
+  this `0x24`. Like Elektroid, the page empties a folder before it deletes it, one request at a time,
+  and lists the folder again afterwards. It offers no delete for what the Cycles marks protected
+  (`factory`), nor for `/incoming`, which the Cycles makes when it formats its drive. ModdedTransfer
+  reports that a delete sometimes fails until the Cycles restarts, in Elektron Transfer as well; the
+  page then shows the refusal and what is left. SAMPLE needs no change: a slot whose file is gone
+  fails at once and stays silent (`test_missing`), a load whose file goes away gives its memory back
+  and fails on the next look (`load_step` in `machine/pool.c`), and a loaded sample keeps its memory
+  until no sound names it (section 7).
 
 The page writes each audio file as a 48 kHz mono 16-bit sample in the format of section 7 and
 checks the size the Cycles reports afterwards. In `/Wavetables`, the folder model27's CHORD Tables
@@ -682,6 +694,9 @@ pixels per OS pixel) and compare against the PBM pictures above.
   from column 23; also under ASan and UBSan; `make test`; `make filter-test`), the build against
   Modded-Cycles `95b63b7` with elektron-firmware-tool's check, then digiemu and a Model:Cycles
   (2026-10-25), with the same image byte for byte.
+- **Upload page 0.2** (deleting, 2026-10-26): host tests (`make uploader-test`: a no deletes
+  nothing, a file goes, `factory` and `/incoming` have no ×, a folder with a folder in it goes with
+  its contents first, a refusal stops it and is shown). Not yet on a Model:Cycles.
 
 ## 16. The filter
 

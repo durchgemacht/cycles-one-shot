@@ -49,6 +49,10 @@
   li.folder > span:first-child::before { content: "▸ "; color: var(--muted); }
   li.folder:hover { background: var(--bg); }
   li.empty { color: var(--muted); justify-content: flex-start; }
+  #folder li > span:first-child { flex: 1; }
+  button.del { padding: 1px 9px; }
+  button.del:hover:enabled { color: var(--bad); border-color: var(--bad); }
+  button.del.kept { visibility: hidden; }
   li input { flex: 1; }
   .info { color: var(--muted); font-size: 13px; white-space: nowrap; }
   .bad { color: var(--bad); }
@@ -84,6 +88,7 @@
       <button id="mkdir">New folder</button>
     </div>
     <ul id="folder"></ul>
+    <p class="note">× deletes a sample, or a folder with everything in it, from the Cycles after asking.</p>
   </section>
 
   <section>

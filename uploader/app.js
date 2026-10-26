@@ -144,11 +144,16 @@
 
     /* ---- folders ------------------------------------------------------------------------- */
 
+    /* A folder's entries, without moving the page there. */
+    async function readDir(path) {
+        return E.parseDir(await send(E.TYPE.READ_DIR, E.pathBytes(path), 5000));
+    }
+
     async function listDir(path) {
-        var m = await send(E.TYPE.READ_DIR, E.pathBytes(path), 5000);
+        var items = await readDir(path);
 
         state.path = path;
-        state.items = E.parseDir(m).sort(function (a, b) {
+        state.items = items.sort(function (a, b) {
             return a.folder !== b.folder ? (a.folder ? -1 : 1) : a.name.localeCompare(b.name);
         });
         render();
@@ -165,6 +170,46 @@
             throw new Error(E.replyText(m) || "the Cycles did not make the folder");
         await listDir(E.joinPath(state.path, name));
         show("Folder " + state.path + " made.", "ok");
+    }
+
+    /* What the page offers no delete for: what the Cycles marks protected, and /incoming, which it
+       makes when it formats its drive (the files in it can go). */
+    function kept(it) {
+        return it.writeProtected || (state.path === "/" && it.folder && it.name === "incoming");
+    }
+
+    /* The Cycles deletes only an empty folder, so its contents go first, one request at a time. */
+    async function remove(path, folder) {
+        var items, m, i;
+
+        if (folder) {
+            items = await readDir(path);
+            for (i = 0; i < items.length; i++)
+                await remove(E.joinPath(path, items[i].name), items[i].folder);
+        }
+        show("Deleting " + path + "…");
+        m = await send(folder ? E.TYPE.DELETE_DIR : E.TYPE.DELETE_FILE, E.pathBytes(path), 30000);
+        if (!E.replyOk(m))
+            throw new Error("the Cycles did not delete " + path + (E.replyText(m) ? ": " + E.replyText(m) : ""));
+    }
+
+    async function deleteItem(it) {
+        var path = E.joinPath(state.path, it.name), here = state.path, items;
+
+        if (!window.confirm(it.folder ? "Delete the folder “" + it.name + "” and everything in it from the Cycles?" +
+                                        " This cannot be undone."
+                                      : "Delete “" + it.name + "” from the Cycles? This cannot be undone."))
+            return;
+        try {
+            await remove(path, it.folder);
+        } catch (e) {
+            await listDir(here).catch(function () {});   /* show what is left */
+            throw e;
+        }
+        items = await listDir(here);
+        if (items.some(function (x) { return x.name === it.name; }))
+            throw new Error(it.name + " is still in the folder afterwards");
+        show("Deleted " + path + ".", "ok");
     }
 
     /* ---- files --------------------------------------------------------------------------- */
@@ -313,13 +358,25 @@
             list.appendChild(up);
         }
         state.items.forEach(function (it) {
-            var li = document.createElement("li"), name = document.createElement("span"), info = document.createElement("span");
+            var li = document.createElement("li"), name = document.createElement("span"), info = document.createElement("span"),
+                rm = document.createElement("button");
 
             name.textContent = it.name;
             info.className = "info";
             info.textContent = it.folder ? (it.writeProtected ? "protected" : "") : kb(it.size);
+            /* kept rows hold an invisible one, so the columns stay in line */
+            rm.className = "del" + (kept(it) ? " kept" : "");
+            rm.textContent = "×";
+            rm.title = "Delete from the Cycles";
+            rm.disabled = state.busy || kept(it);
+            rm.onclick = function (ev) {
+                if (ev)
+                    ev.stopPropagation();       /* a folder's row would open it */
+                return guarded(deleteItem)(it);
+            };
             li.appendChild(name);
             li.appendChild(info);
+            li.appendChild(rm);
             if (it.folder) {
                 li.className = "folder";
                 li.onclick = guarded(function () { return listDir(E.joinPath(state.path, it.name)); });

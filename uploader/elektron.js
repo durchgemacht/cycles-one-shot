@@ -4,7 +4,8 @@
 
    Facts used, not code: the message framing and the file commands follow ModdedTransfer
    (github.com/ktwzk/modded-transfer, WTFPL), which follows Elektroid. The Cycles answers the raw
-   twins of the Model:Samples' sample commands, 0x14 for 0x10 and so on (Model-TG's rpc_map, MIT).
+   twins of the Model:Samples' sample commands, 0x14 for 0x10 and so on (Model-TG's rpc_map, MIT);
+   the OS 1.13 lists 0x16 and 0x24, the twins of the deletes 0x12 and 0x20, among the types it takes.
    The OS hashes a file when it closes it after writing (0x4007c022 -> 0x4007e2f6); its browser and
    SAMPLE only see files with that hash. */
 (function (exports) {
@@ -15,6 +16,8 @@
         PING: 0x01,
         READ_DIR: 0x14,
         CREATE_DIR: 0x15,
+        DELETE_DIR: 0x16,           /* an empty folder only */
+        DELETE_FILE: 0x24,
         OPEN_WRITE: 0x43,
         CLOSE_WRITE: 0x44,
         WRITE: 0x45
