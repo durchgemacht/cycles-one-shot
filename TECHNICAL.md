@@ -696,7 +696,7 @@ pixels per OS pixel) and compare against the PBM pictures above.
   (2026-10-25), with the same image byte for byte.
 - **Upload page 0.2** (deleting, 2026-10-26): host tests (`make uploader-test`: a no deletes
   nothing, a file goes, `factory` and `/incoming` have no ×, a folder with a folder in it goes with
-  its contents first, a refusal stops it and is shown). Not yet on a Model:Cycles.
+  its contents first, a refusal stops it and is shown). On a Model:Cycles (2026-10-26).
 
 ## 16. The filter
 
