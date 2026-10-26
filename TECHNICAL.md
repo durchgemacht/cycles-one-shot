@@ -697,6 +697,10 @@ pixels per OS pixel) and compare against the PBM pictures above.
 - **Upload page 0.2** (deleting, 2026-10-26): host tests (`make uploader-test`: a no deletes
   nothing, a file goes, `factory` and `/incoming` have no ×, a folder with a folder in it goes with
   its contents first, a refusal stops it and is shown). On a Model:Cycles (2026-10-26).
+- **Upload page 0.3** (a Back button instead of the `..` row, after a report that there was no way
+  back to the folder above, 2026-10-26): host tests (`make uploader-test`: no Back at the root, Back
+  in a folder, into a folder in a folder and back up one at a time, an empty folder says so), then
+  in Chrome against a stand-in Cycles. Not yet with a Model:Cycles.
 
 ## 16. The filter
 

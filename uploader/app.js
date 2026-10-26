@@ -342,20 +342,13 @@
     }
 
     function renderFolder() {
-        var list = $("folder"), up;
+        var list = $("folder");
 
         $("path").textContent = state.path;
         list.innerHTML = "";
         if (!state.connected) {
             list.innerHTML = '<li class="empty">Not connected.</li>';
             return;
-        }
-        if (state.path !== "/") {
-            up = document.createElement("li");
-            up.className = "folder";
-            up.textContent = "..";
-            up.onclick = guarded(function () { return listDir(E.parentPath(state.path)); });
-            list.appendChild(up);
         }
         state.items.forEach(function (it) {
             var li = document.createElement("li"), name = document.createElement("span"), info = document.createElement("span"),
@@ -383,8 +376,8 @@
             }
             list.appendChild(li);
         });
-        if (!state.items.length && state.path === "/")
-            list.innerHTML = '<li class="empty">The drive is empty.</li>';
+        if (!state.items.length)
+            list.innerHTML = '<li class="empty">' + (state.path === "/" ? "The drive is empty." : "This folder is empty.") + "</li>";
     }
 
     function renderFiles() {
@@ -420,6 +413,7 @@
 
         $("connect").disabled = state.busy;
         $("in").disabled = $("out").disabled = state.busy || !state.access;
+        $("back").disabled = !ready || state.path === "/";
         $("mkdir").disabled = !ready;
         $("refresh").disabled = !ready;
         $("pick").disabled = state.busy;
@@ -430,6 +424,7 @@
 
     $("connect").onclick = guarded(connect);
     $("in").onchange = $("out").onchange = guarded(usePorts);
+    $("back").onclick = guarded(function () { return listDir(E.parentPath(state.path)); });
     $("mkdir").onclick = guarded(makeFolder);
     $("refresh").onclick = guarded(function () { return listDir(state.path); });
     $("pick").onclick = function () { $("chooser").click(); };

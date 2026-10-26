@@ -88,6 +88,8 @@ from the Model:Samples: looping and reverse playback.
   and in the digiemu emulator. A sound saved by 0.4 or earlier loads with the filter off.
 - **Machine 0.4** (waveform view, Start and Length as on the Model:Samples, fades): tested on a
   Model:Cycles (2026-10-17), and in the digiemu emulator.
+- **Upload page 0.3** (a Back button to the folder above, instead of the small `..` row): host
+  tests, and in a browser against a stand-in Cycles; not yet with a Model:Cycles.
 - **Upload page 0.2** (deleting files and folders): host tests against a stand-in Cycles, and
   tested on a Model:Cycles (2026-10-26). A sample that is loaded plays on until no sound names it or the Cycles
   restarts; after that a sound that names it stays silent.

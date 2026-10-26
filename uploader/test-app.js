@@ -27,7 +27,7 @@ function element(id) {
     };
     return el;
 }
-const ids = ["status", "in", "out", "connect", "mkdir", "refresh", "pick", "chooser", "upload", "path", "folder", "files"];
+const ids = ["status", "in", "out", "connect", "back", "mkdir", "refresh", "pick", "chooser", "upload", "path", "folder", "files"];
 const elements = {};
 ids.forEach(id => { elements[id] = element(id); });
 
@@ -189,11 +189,15 @@ const state_files = () => elements.files.children.filter(li => li.children.lengt
     check(elements.in.value === "in1" && elements.out.value === "out1", "the Cycles' ports are picked");
     check(JSON.stringify(names(elements.folder)) === '["factory","incoming"]', "the root is listed: " + names(elements.folder));
     check(elements.folder.children[0].children[1].textContent === "protected", "factory shows as protected");
+    check(elements.back.disabled, "no Back at the root");
 
     /* a new folder, entered */
     elements.mkdir.onclick();
     await until(() => elements.path.textContent === "/My Samples", "the new folder is made and entered");
     check(drive.has("/My Samples"), "the stand-in has the folder");
+    check(!elements.back.disabled, "Back in a folder");
+    check(elements.folder.children.length === 0 && /This folder is empty\./.test(elements.folder.innerHTML),
+          "an empty folder says so: " + elements.folder.innerHTML);
 
     /* two files: one audio, one not */
     elements.chooser.files = [file("Kick 01.wav", 0x52), file("notes.txt", 0x00)];
@@ -233,7 +237,7 @@ const state_files = () => elements.files.children.filter(li => li.children.lengt
     check(!log.slice(writes).includes(E.TYPE.OPEN_WRITE), "and nothing is opened for it");
 
     /* writing into a protected folder: the Cycles' refusal shows */
-    elements.folder.children[0].onclick();                         /* .. */
+    elements.back.onclick();
     await until(() => elements.path.textContent === "/", "back at the root");
     elements.folder.children[0].onclick();                         /* factory */
     await until(() => elements.path.textContent === "/factory", "into factory");
@@ -247,7 +251,7 @@ const state_files = () => elements.files.children.filter(li => li.children.lengt
     check(!/warning/.test(elements.status.textContent), "no warning outside /Wavetables");
 
     /* /Wavetables, which model27's CHORD Tables plays: a table whose first frame is no sine is told */
-    elements.folder.children[0].onclick();                         /* .. */
+    elements.back.onclick();
     await until(() => elements.path.textContent === "/", "back at the root again");
     folderName = "Wavetables";
     elements.mkdir.onclick();
@@ -301,7 +305,7 @@ const state_files = () => elements.files.children.filter(li => li.children.lengt
     check(!row("01") && row("02") && elements.path.textContent === "/Wavetables", "and from the list; the page stays in the folder");
 
     /* the root: no × on what the Cycles protects, nor on /incoming, which it makes itself */
-    elements.folder.children[0].onclick();                         /* .. */
+    elements.back.onclick();
     await until(() => elements.path.textContent === "/", "back at the root for deleting");
     check(row("factory").children[2].disabled && row("factory").children[2].className === "del kept", "factory has no ×");
     check(row("incoming").children[2].disabled && row("incoming").children[2].className === "del kept", "incoming has no ×");
@@ -338,6 +342,25 @@ const state_files = () => elements.files.children.filter(li => li.children.lengt
     check(!drive.has("/Kit/a") && drive.has("/Kit/b") && drive.has("/Kit/c") && drive.has("/Kit"), "a went, b and what follows stay");
     check(!!row("Kit") && elements.path.textContent === "/", "the folder is still listed");
     check(!elements.connect.disabled && !row("Kit").children[2].disabled, "the page takes clicks again");
+
+    /* the tree: into a folder in a folder by their rows, and back up one at a time */
+    drive.set("/A", { folder: true });
+    drive.set("/A/B", { folder: true });
+    elements.refresh.onclick();
+    await until(() => !!row("A"), "A is listed");
+    row("A").onclick();
+    await until(() => elements.path.textContent === "/A", "into A");
+    check(JSON.stringify(names(elements.folder)) === '["B"]', "A lists B and nothing else: " + names(elements.folder));
+    row("B").onclick();
+    await until(() => elements.path.textContent === "/A/B", "into A/B");
+    check(/This folder is empty\./.test(elements.folder.innerHTML), "B is empty and says so");
+    elements.back.onclick();
+    await until(() => elements.path.textContent === "/A", "Back goes to A");
+    check(!elements.back.disabled, "and Back is still there");
+    elements.back.onclick();
+    await until(() => elements.path.textContent === "/", "Back again goes to the root");
+    check(elements.back.disabled, "where Back is off");
+    check(!!row("A") && !!row("Kit") && !!row("factory"), "the root is listed again");
 
     if (failures) {
         console.log(failures + " check(s) failed");
