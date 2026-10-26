@@ -742,7 +742,10 @@ pixels per OS pixel) and compare against the PBM pictures above.
   UBSan; `make filter-test`), then digiemu in model27's build with the switches: works. A first
   report of regular clicks with Loop on was, as far as the maintainer can tell, RETRIG left latched in
   digiemu, which keeps retriggering the track; the fade-in after a cut came out of that report.
-  One-Shot's own image not yet on a device.
+  Then model27's build, flashed from its web flasher, on a Model:Cycles (2026-10-26): Loop and Reverse
+  with their LEDs and letters, a single cycle looped, a trig cutting a sounding note, PUNCH, GATE and
+  Control All as before, the switches kept by a saved project. One-Shot's own image not yet on a device
+  on its own.
 - **Upload page 0.2** (deleting, 2026-10-26): host tests (`make uploader-test`: a no deletes
   nothing, a file goes, `factory` and `/incoming` have no ×, a folder with a folder in it goes with
   its contents first, a refusal stops it and is shown). On a Model:Cycles (2026-10-26).

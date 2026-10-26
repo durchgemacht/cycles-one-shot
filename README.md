@@ -78,9 +78,9 @@ work as on the Model:Samples too, as two switches of model27's builds (below).
 
 - **Machine 0.11** (Loop and Reverse as switches for model27's shortcut layer, L and R in the name's
   box; a trig that cuts a sounding note fades the new one in over 0.67 ms; a voice whose amp envelope
-  has closed lets go of its sample): host-tested, and tested in the digiemu emulator in model27's
-  build with the switches (2026-10-26). One-Shot's own image, without the switches, is host-tested;
-  not yet on a device.
+  has closed lets go of its sample): host-tested, and tested in model27's build with the switches,
+  in the digiemu emulator and on a Model:Cycles flashed from model27's web flasher (2026-10-26).
+  One-Shot's own image, without the switches, is host-tested; not yet on a device on its own.
 - **Machine 0.10** (a column on the left with the pattern's number, the track's number and its
   level; the waveform 105 pixels wide to its right): tested on a Model:Cycles (2026-10-25), and in
   the digiemu emulator.
