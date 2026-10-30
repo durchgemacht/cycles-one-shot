@@ -63,6 +63,18 @@ void host_draw_text(void *bmp, void *font, int32_t x, int32_t y, int32_t flags, 
 #define KNOB_PARAM(v)       (*(const int32_t *)((const char *)(v) + 0x230))
 #define VALUE_SHOWN()       (host_value_shown != 0)
 #define TRIG_HELD()         (host_trig_held != 0)
+extern uint64_t host_held_steps;
+extern int32_t host_step_count, host_locks[64][2], host_sound_locks[64];
+extern int host_note_draws;
+int32_t host_step_lock(int32_t n, int32_t p);
+char *host_pool_sound(int32_t i);
+void host_note_draw(void *view, void *bmp);
+#define NOTE_DRAW(v, b)     host_note_draw(v, b)
+#define step_count()        (host_step_count)
+#define step_held(n)        ((int)(host_held_steps >> (n) & 1))
+#define step_lock(n, p)     host_step_lock(n, p)
+#define step_sound_lock(n)  (host_sound_locks[n])
+#define os_pool_sound(i)    host_pool_sound(i)
 #define selected_track()    (host_track)
 #define current_pattern()   (host_pattern)
 #define track_level(t)      ((void)(t), host_level)

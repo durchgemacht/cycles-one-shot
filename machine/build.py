@@ -13,9 +13,10 @@ detours that teach the MACHINES page, the encoder and the sound records the new 
 code is linked at that payload's start, its variables above the moved tables, and the sample pool
 starts 8 MB above the payload window so that other machines (MACRO, ACID) can share the window in
 a combined build. Five more writes lead into SAMPLE's own hooks (machine/hooks.S, pool.c): the
-browser's file open, the sound record save (2 versions) and load, and the screen's redraw. Two
-vtable entries lead the draw methods of the main screen and of the knob view through SAMPLE's view
-(machine/view.c), which shows a SAMPLE track's waveform with its start and end.
+browser's file open, the sound record save (2 versions) and load, and the screen's redraw. Three
+vtable entries lead the draw methods of the main screen, of the knob view and of NoteVelocityView
+through SAMPLE's view (machine/view.c), which shows a SAMPLE track's waveform with its start and end,
+with a trig held its locks.
 
 What this tweak cannot be installed with is computed, not listed by hand: every tweak of the clone
 that writes other bytes to the same addresses, or whose payload runs in SAMPLE's payload window or
@@ -24,7 +25,7 @@ Modded-Cycles (it changes nothing there), compiles the machine with the m68k-elf
 writes
 
     build/sampler-tweak.json                  the tweak, in Modded-Cycles' format
-    build/model-cycles_OS1.13-sampler-v0.11.syx
+    build/model-cycles_OS1.13-sampler-v0.12.syx
 
 It starts from your own copy of the official OS file (checked by its SHA-256). Modded-Cycles'
 build steps check every write against the stock bytes, refuse writes into free space the OS
@@ -44,7 +45,7 @@ import subprocess
 import sys
 import tempfile
 
-VERSION = "0.11"
+VERSION = "0.12"
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 BUILD = ROOT / "build"
@@ -79,7 +80,8 @@ HOOKS = ((0x400a6602, "4eb9400a3052", "jsr", "smp_hook_open"),       # the brows
 # screen's redraw (0x40076c76) with the view and the screen's Bitmap; each entry is the only reference
 # to its method, and SAMPLE's calls the stock one for anything else.
 VIEWS = ((0x400ffe30, 0x4001b22a, "smp_main_draw"),       # MainScreenView (vtable 0x400ffe20)
-         (0x4010053c, 0x4001e40a, "smp_knob_draw"))       # the knob view (vtable 0x4010052c)
+         (0x4010053c, 0x4001e40a, "smp_knob_draw"),       # the knob view (vtable 0x4010052c)
+         (0x40102578, 0x400299de, "smp_note_draw"))       # NoteVelocityView (vtable 0x40102568)
 # Tweaks that share the PRESET browser's file open with SAMPLE (they need Model-TG, which the byte check
 # already refuses); named here so that the reason stays visible.
 EXTRA_CONFLICTS = {"sample-preview", "sample-preview-st"}

@@ -53,6 +53,27 @@ int32_t host_fmt_int(void *self, int32_t value, char *buf)
     return sprintf(buf, "%d", (int)(value >> 8));
 }
 static int live_kit;                            /* the pattern whose kit is live */
+uint64_t host_held_steps;
+int32_t host_step_count, host_locks[64][2], host_sound_locks[64];
+
+int32_t host_step_lock(int32_t n, int32_t p)
+{
+    return p == DESC_START ? host_locks[n][0] : p == DESC_LENGTH ? host_locks[n][1] : -1;
+}
+
+char *host_pool_sound(int32_t i) { return KIT(live_kit) + KIT_POOL + 100 * i; }
+
+/* NoteVelocityView's draw: counted, or with note_hook set (previews) drawn by it */
+int host_note_draws;
+static void (*note_hook)(void);
+void host_note_draw(void *view, void *bmp)
+{
+    (void)view;
+    (void)bmp;
+    host_note_draws++;
+    if (note_hook)
+        note_hook();
+}
 static int32_t states[6][12];
 static int amp_calls, dec_calls;
 
@@ -318,9 +339,13 @@ static void reset_all(void)
     host_play_kit = 0;
     host_value_shown = 0;
     host_trig_held = 0;
+    host_held_steps = 0;
+    host_step_count = 16;
+    memset(host_locks, 0xff, sizeof host_locks);
+    memset(host_sound_locks, 0xff, sizeof host_sound_locks);
     host_track = 0;
     host_pattern = 0;
-    host_main_draws = host_knob_draws = 0;
+    host_main_draws = host_knob_draws = host_note_draws = 0;
     ntexts = 0;
     memset(host_ui_objects, 0, sizeof host_ui_objects);
     fmt_int_calls = 0;
@@ -991,7 +1016,7 @@ static void test_view(void)
     host_trig_held = 1;
     smp_knob_draw(view, &screen);
     host_trig_held = 0;
-    CHECK(host_knob_draws == 2, "with a trig held, Start shows its locked value");
+    CHECK(host_knob_draws == 1, "with a trig held that has no locks, Start shows the track's view (test_view_held)");
     smp_main_draw(0, &screen);
     CHECK(host_main_draws == 1, "while a value shows, the main screen is the stock one");
 
@@ -1006,7 +1031,125 @@ static void test_view(void)
     host_track = -1;
     host_value_shown = 0;
     smp_main_draw(0, &screen);
-    CHECK(host_main_draws == 3 && host_knob_draws == 3, "other machines keep the stock views");
+    CHECK(host_main_draws == 3 && host_knob_draws == 2, "other machines keep the stock views");
+}
+
+/* The start's solid line at column s and the end's dotted one at column e of the waveform. */
+static int markers(int s, int e)
+{
+    int ok = 1, y;
+
+    for (y = WAVE_MID - WAVE_HALF; y <= WAVE_MID + WAVE_HALF; y++)
+        ok &= pix(WAVE_X0 + s, y) && (y & 1 || pix(WAVE_X0 + e, y));
+    return ok;
+}
+
+static void lock_step(int n, int start, int length, int pool)
+{
+    host_held_steps |= (uint64_t)1 << n;
+    host_locks[n][0] = start < 0 ? -1 : start << 8;
+    host_locks[n][1] = length < 0 ? -1 : length << 8;
+    host_sound_locks[n] = pool;
+}
+
+static void turn_knob(char *view, int32_t p)
+{
+    memcpy(view + 0x230, &p, 4);
+    host_value_shown = 1;
+    smp_knob_draw(view, &screen);
+    smp_note_draw(0, &screen);
+}
+
+/* With a trig held: the main screen as without one; turning Start or Length shows the whole view for what the held
+   trig plays, its locks marked, a sound lock's sample and name, while NoteVelocityView keeps out of it. */
+static void test_view_held(void)
+{
+    char *s, *pool, *other, view[0x240];
+
+    reset_all();
+    memset(view, 0, sizeof view);
+    hit_frames = 48000;
+    add_file(130, 0xd101, 48000, 0, 48000, hit);
+    add_file(131, 0xd103, 24000, 0, 48000, ramp);
+    s = host_sound(2);
+    make_sound(s, 130, 0xd101);
+    memcpy(s + 4, "KICK 01", 8);
+    pool = host_pool_sound(5);
+    make_sound(pool, 131, 0xd103);
+    memcpy(pool + 4, "HAT 02", 7);
+    other = host_pool_sound(6);
+    memset(other, 0, 100);                              /* a sound of machine 0 */
+    tick_until(0xd101, SLOT_READY, 5);
+    tick_until(0xd103, SLOT_READY, 5);
+    CHECK(slot_of(0xd103) && slot_of(0xd103)->state == SLOT_READY, "a pool sound's sample is loaded");
+    host_track = 2;
+    set_knob(s, 42, 0);
+    set_knob(s, 44, 120);
+    set_knob(pool, 42, 0);
+    set_knob(pool, 44, 120);
+    host_trig_held = 1;
+
+    /* step 4: Start 30, Length 45 locked: 26 to 65 of 105 columns, as in test_view */
+    lock_step(4, 30, 45, -1);
+    host_value_shown = 0;
+    smp_main_draw(0, &screen);
+    smp_note_draw(0, &screen);
+    CHECK(host_main_draws == 0 && markers(0, 104) && host_note_draws == 1,
+          "holding a trig: the main screen with the sound's own values, NoteVelocityView over it");
+    turn_knob(view, DESC_START);
+    CHECK(host_knob_draws == 0 && markers(26, 65) && host_note_draws == 1,
+          "turning Start on it: the whole view with the trig's locks, no NoteVelocityView");
+    turn_knob(view, DESC_LENGTH);
+    CHECK(host_knob_draws == 0 && markers(26, 65) && host_note_draws == 1, "turning Length: the same");
+    turn_knob(view, 42);
+    CHECK(host_knob_draws == 1 && host_note_draws == 2, "another knob: the stock knob view, NoteVelocityView");
+    host_value_shown = 0;
+    smp_knob_draw(view, &screen);
+    smp_note_draw(0, &screen);
+    CHECK(host_knob_draws == 2 && host_note_draws == 3, "the value gone: NoteVelocityView back");
+    host_trig_held = 0;
+    held_shown = 1;
+    smp_note_draw(0, &screen);
+    CHECK(host_note_draws == 4, "no trig held: NoteVelocityView's own draw, whatever the flag");
+
+    /* two held steps: the first with a lock of the turned knob or a sound lock */
+    host_trig_held = 1;
+    host_held_steps = 0;
+    memset(host_locks, 0xff, sizeof host_locks);
+    lock_step(2, -1, 10, -1);
+    lock_step(4, 60, -1, -1);
+    turn_knob(view, DESC_START);
+    CHECK(markers(52, 104), "Start: step 4's Start 60 and the sound's Length 120: 52 to 104");
+    turn_knob(view, DESC_LENGTH);
+    CHECK(markers(0, 8), "Length: step 2's Length 10 and the sound's Start 0: 0 to 8");
+
+    /* a held step past the pattern's steps does not count */
+    host_held_steps = 0;
+    memset(host_locks, 0xff, sizeof host_locks);
+    lock_step(20, 60, 10, -1);
+    turn_knob(view, DESC_START);
+    CHECK(markers(0, 104), "a step past the 16 steps: the sound's own values");
+
+    /* a sound lock: its sample and name, its own values where the step has no lock */
+    host_held_steps = 0;
+    memset(host_locks, 0xff, sizeof host_locks);
+    set_knob(pool, 44, 60);
+    lock_step(7, 40, -1, 5);
+    ntexts = 0;
+    turn_knob(view, DESC_LENGTH);
+    CHECK(host_note_draws == 4 && ntexts == 1 && !strcmp(texts[0].s, "HAT 02") && markers(35, 87),
+          "a sound lock: its name, Start 40 locked, its Length 60: 35 to 87");
+    lock_step(7, -1, -1, 5);
+    set_knob(pool, 42, 60);
+    turn_knob(view, DESC_START);
+    CHECK(markers(52, 104), "a sound lock without locks: that sound's Start 60 and Length 60");
+
+    /* a sound lock of another machine: the stock views */
+    host_held_steps = 0;
+    lock_step(3, 30, 45, 6);
+    turn_knob(view, DESC_START);
+    CHECK(host_knob_draws == 3 && host_note_draws == 5, "a sound lock of machine 0: the stock knob view, NoteVelocityView");
+    host_trig_held = 0;
 }
 
 /* One block with the trig flags as the voice loop sets them: now = a trig in this block (v+0x34), prev =
@@ -1544,6 +1687,7 @@ int main(void)
     test_start_length();
     test_overview();
     test_view();
+    test_view_held();
     test_view_states();
     test_view_column();
     test_machine_change();

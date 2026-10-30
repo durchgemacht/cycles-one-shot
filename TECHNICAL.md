@@ -103,6 +103,7 @@ points at.
 | `0x400075f0` | the screen's redraw asks whether to draw (`jsr 0x40076be4`) | `smp_hook_tick`: the loading tick first (section 7) |
 | `0x400ffe30` | MainScreenView's vtable entry +16, its draw method `0x4001b22a` | `smp_main_draw` (section 9) |
 | `0x4010053c` | the knob view's vtable entry +16, `0x4001e40a` | `smp_knob_draw` |
+| `0x40102578` | NoteVelocityView's vtable entry +16, `0x400299de` | `smp_note_draw` |
 
 The three record hooks replace a function's first two instructions (`lea -12(sp),sp`,
 `movem.l a2-a4,(sp)`) with a `jmp`; the hook runs those instructions itself, jumps into the body
@@ -318,7 +319,23 @@ runs from another task (a screen copy), so the tick takes its own `tas` lock.
   handler (`0x4001f4f0`, store at `0x4001f73a`) takes from the knob rows (`0x4001e814`). Its
   timeout counter `+0x238` is counted down in another method (`0x4001efaa`), not in `draw`.
 - While a trig is held, the knob view shows the held steps' locked values: per step the lock
-  (vtable +96), a sound lock (vtable +108), otherwise the base value (vtable +80).
+  (vtable +96), a sound lock (vtable +108), otherwise the base value (vtable +80). It goes through
+  the held steps in order (`0x4006be48`: bit n of the 64-bit word `ui+348` (high) : `ui+352` (low),
+  for n below the count `0x40016402` gives for the track's pattern data, `0x4000f23e(project)`) and
+  stops at the first with a lock of the shown parameter or a sound lock (`0x4001d66e`). Entry +96
+  (`0x4001d784(view, step, p)`, −1 for none) reaches the track through entry +128 (`0x4001dff4`),
+  which uses nothing else of the view; entry +108 (`0x4001e246(view, step)`, a signed byte, −1 for
+  none) does not touch the view; entry +80 (`0x4001e160(view, p, i)`) reads the base value in pool
+  sound i, or in the track's sound for i < 0. A lock and a base value go to the same drawing, so
+  both are the parameter's 8.8 word.
+- Pool sound i: `0x40009c4a(project + 116, i)` gives its holder, the project + 774 + 68 · i, a
+  holder like a track's; the sound through entry +40 of its vtable.
+- NoteVelocityView (vtable `0x40102568`, draw `0x400299de`, its only reference the entry +16 at
+  `0x40102578`) draws while a trig is held, and only then: the trig's note in the large font
+  (`0x401429ec`, 16 × 22, columns of 32 bits) and `Vel:%4s`, `Len:%4s` in the small one, over
+  columns 0–63, the same lit box with rounded corners as the knob view's. It is drawn after the
+  main screen and the knob view, so with a trig held the left half shows the trig and the right
+  half the main screen or the turned value.
 - The selected track: `0x40012412(0x4000eb90(project))`.
 - The current pattern, 0–95: `0x4006a96c(0x400cfd0e())`, which reads the sequencer's current
   pattern (`0x40054828`) and clamps it. MainScreenView reads it so (`0x4001b276`) and writes it as
@@ -333,10 +350,20 @@ runs from another task (a screen copy), so the tick takes its own `tas` lock.
   it from a set of sprites: none at 0, otherwise `1 + (level − 1) · (n − 2) / 126`. It is the only
   caller. MainScreenView is drawn again when the level changes, so a turn of LEVEL moves the bar.
 
-**SAMPLE's view** (`machine/view.c`) takes over the two draw entries. On a SAMPLE track it draws
-the main screen itself, and the knob view's screen while Start or Length is turned without a held
-trig; everything else goes to the stock method. It reads the sound's live COLOR and SHAPE, so the
-markers move while the knob turns.
+**SAMPLE's view** (`machine/view.c`) takes over the three draw entries. On a SAMPLE track it draws
+the main screen itself, and the knob view's screen while Start or Length is turned; everything else
+goes to the stock method. It reads the sound's live COLOR and SHAPE, so the markers move while the
+knob turns.
+
+With a trig held, the main screen stays as without one, under NoteVelocityView's left half. While
+Start or Length turns then, the knob view's screen shows the whole view for what the held trig
+plays, found as the knob view finds its value: the first held step with a lock of the turned knob
+or a sound lock; its sound is the sound lock's (its sample, its name) or the track's, and Start and
+Length are the step's locks where it has them, that sound's own values elsewhere. NoteVelocityView's
+draw (`smp_note_draw`) then leaves the screen as it is, so the waveform keeps its 105 columns; when
+the value window closes, the knob view draws nothing and NoteVelocityView is back. A flag set by
+each knob view draw tells the next NoteVelocityView draw, since the redraw draws every view each
+time, the knob view first. A sound lock with a sound of another machine keeps the stock views.
 
 - **The column**, 21 pixels wide (columns 0–20) and as high as the screen, after the maintainer's
   drawing, lit marks on the dark screen: at the top a lit box (rows 51–63, its corner pixels dark)
